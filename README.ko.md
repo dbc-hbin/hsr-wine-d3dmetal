@@ -4,27 +4,36 @@
 
 macOS(Apple Silicon) 환경의 **Yaagl ZZZ OS**에서 **젠레스 존 제로(Zenless Zone Zero, ZZZ)**를 **Direct3D 12 (GPTK 4.0b2)**로 가장 부드럽고 안정적으로 구동하기 위한 Wine 11.17 최적화 런타임 소스 및 간편 설치 프로그램입니다.
 
-Yaagl 앱의 Wine 메뉴에 **`Wine 11.17 ZZZ DX12 (GPTK4.0b2)`**라는 이름으로 등록되어 원클릭으로 사용하실 수 있습니다.
+설치 프로그램은 포함된 사전 빌드 Wine 패키지를 설치하고 Yaagl Wine 메뉴에 **`Wine 11.17 ZZZ DX12 (GPTK4.0b2)`**를 등록합니다.
 
 ---
 
 ## ⚡ 빠른 시작 (GUI 간편 설치)
 
-일반 사용자분들은 별도의 복잡한 빌드 과정 없이, 포함된 **GUI 설치 프로그램**으로 1초 만에 Yaagl ZZZ OS에 적용할 수 있습니다.
+일반 사용자분들은 별도의 복잡한 빌드 과정 없이, 포함된 **GUI 설치 프로그램**으로 Yaagl ZZZ OS에 적용할 수 있습니다.
 
 ### 방법 1: GUI 앱으로 설치
-1. [Releases](https://github.com/dbc-hbin/zzz-wine-d3dmetal-dx12/releases)에서 `ZZZWineDX12Installer.zip`을 다운로드하고 압축을 풉니다.
+1. [ZZZWineDX12Installer.zip](https://github.com/dbc-hbin/zzz-wine-d3dmetal-dx12/releases/latest/download/ZZZWineDX12Installer.zip)을 다운로드하고 압축을 풉니다.
 2. **`ZZZ Wine DX12 Installer.app`**을 실행합니다.
 3. Yaagl ZZZ OS 앱 및 데이터 경로가 자동으로 감지됩니다.
-4. **`Install Wine 11.17 ZZZ DX12`** 버튼을 누르면 끝!
-   - 런타임 패키지 무결성 검증 (SHA-256)
-   - `resources.neu` 자동 백업 및 메뉴 등록 (`Wine 11.17 ZZZ DX12 (GPTK4.0b2)`)
-   - Wine 런타임 파일 자동 압축 해제 및 활성화
-5. Yaagl ZZZ OS를 열고 게임을 시작하시면 바로 적용됩니다.
+4. Yaagl ZZZ OS를 종료한 후 **`Install Wine 11.17 ZZZ DX12`** 버튼을 누릅니다.
+   - 포함된 사전 빌드 Wine 런타임 아카이브를 Yaagl에 설치합니다.
+   - Yaagl Wine 메뉴에 **`Wine 11.17 ZZZ DX12 (GPTK4.0b2)`**를 등록합니다.
+   - Yaagl의 리소스, Wine 선택 및 Wine 디렉터리를 백업하여 기존 구성을 복원할 수 있습니다.
+5. Yaagl ZZZ OS를 열고 Wine 메뉴에서 설치된 Wine 런타임을 선택해 게임을 시작합니다.
+
+포함된 아카이브는 Yaagl의 로컬 런타임 저장소에 유지되므로, 오프라인에서도 Yaagl Wine 메뉴에서 이 Wine 런타임을 선택하거나 다른 Wine 런타임으로 전환할 수 있습니다. 설치 프로그램은 Node.js를 필요로 하지 않습니다.
 
 ### 방법 2: 터미널 CLI로 설치
 ```bash
-./installer/zzz-wine-installer --cli
+./installer/zzz-wine-installer --install \
+  --app-path "/Applications/Yaagl ZZZ OS.app" \
+  --support-path "$HOME/Library/Application Support/Yaagl ZZZ OS"
+
+# 이전 Wine 디렉터리 복원
+./installer/zzz-wine-installer --restore \
+  --app-path "/Applications/Yaagl ZZZ OS.app" \
+  --support-path "$HOME/Library/Application Support/Yaagl ZZZ OS"
 ```
 
 ---
@@ -78,9 +87,11 @@ zzz-wine-d3dmetal-dx12/
 └── installer/              # SwiftUI 기반 간편 GUI 설치 프로그램 소스 및 빌드 산출물
     ├── ZZZ Wine DX12 Installer.app  # 컴파일된 실행형 macOS 앱 번들
     ├── zzz-wine-installer           # CLI 실행 바이너리
-    ├── AsarPatcher.swift            # 순수 Swift 기반 resources.neu ASAR 패처
-    ├── InstallerEngine.swift        # 자동 감지, 다운로드, 검증, 설치 엔진
-    └── ContentView.swift            # SwiftUI 사용자 인터페이스
+    ├── RuntimePackage.swift         # 사전 빌드 Wine 패키지 메타데이터
+    ├── AsarPatcher.swift            # Yaagl Wine 메뉴 등록 패처
+    ├── InstallerEngine.swift        # 자동 감지, 설치, 등록 및 복원 엔진
+    ├── ContentView.swift            # SwiftUI 사용자 인터페이스
+    └── resources/typescript.js      # 메뉴 패칭용 내장 JavaScript 컴파일러
 ```
 
 ---

@@ -20,7 +20,7 @@ struct ContentView: View {
                     Text("Wine 11.17 ZZZ DX12 Installer")
                         .font(.title2)
                         .fontWeight(.bold)
-                    Text("High-performance D3DMetal (GPTK 4.0b2) Wine runtime for Yaagl ZZZ OS")
+                    Text("Install and register the prebuilt D3DMetal (GPTK 4.0b2) Wine runtime for Yaagl ZZZ OS")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -41,9 +41,11 @@ struct ContentView: View {
                                 Image(systemName: engine.status.yaaglAppExists ? "checkmark.circle.fill" : "xmark.circle.fill")
                                     .foregroundColor(engine.status.yaaglAppExists ? .green : .red)
                                 Text("Yaagl App:")
-                                Text(engine.appPath)
+                                TextField("Yaagl ZZZ OS.app path", text: $engine.appPath)
                                     .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .textFieldStyle(.roundedBorder)
+                                    .onSubmit { engine.refreshStatus() }
+                                    .accessibilityLabel("Yaagl application path")
                                 Spacer()
                             }
 
@@ -51,9 +53,11 @@ struct ContentView: View {
                                 Image(systemName: engine.status.yaaglSupportExists ? "checkmark.circle.fill" : "xmark.circle.fill")
                                     .foregroundColor(engine.status.yaaglSupportExists ? .green : .red)
                                 Text("Support Folder:")
-                                Text(engine.supportPath)
+                                TextField("Yaagl support folder path", text: $engine.supportPath)
                                     .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .textFieldStyle(.roundedBorder)
+                                    .onSubmit { engine.refreshStatus() }
+                                    .accessibilityLabel("Yaagl support folder path")
                                 Spacer()
                             }
 
@@ -61,7 +65,7 @@ struct ContentView: View {
                                 HStack {
                                     Image(systemName: "cube.fill")
                                         .foregroundColor(.blue)
-                                    Text("Active Wine Tag:")
+                                    Text("Yaagl Wine Selection:")
                                     Text(engine.status.currentWineTag)
                                         .font(.caption)
                                         .lineLimit(1)
@@ -69,20 +73,23 @@ struct ContentView: View {
                                 }
                             }
 
+                            if engine.status.hasBackup {
+                                HStack {
+                                    Image(systemName: "arrow.uturn.backward.circle.fill")
+                                        .foregroundColor(.blue)
+                                    Text("Yaagl resources and Wine backup available")
+                                        .font(.callout)
+                                }
+                            }
+
                             if engine.status.yaaglIsRunning {
                                 HStack {
                                     Image(systemName: "exclamationmark.triangle.fill")
                                         .foregroundColor(.orange)
-                                    Text("Yaagl or Wine processes are currently running.")
+                                    Text("Quit Yaagl and Wine before installing or restoring.")
                                         .font(.callout)
                                         .foregroundColor(.orange)
                                     Spacer()
-                                    Button("Quit Processes") {
-                                        engine.terminateYaaglProcesses()
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                    .tint(.orange)
-                                    .controlSize(.small)
                                 }
                                 .padding(8)
                                 .background(Color.orange.opacity(0.1))
@@ -93,8 +100,10 @@ struct ContentView: View {
                     }
 
                     // Features Card
-                    GroupBox(label: Label("Included Optimizations & Patches", systemImage: "sparkles")) {
+                    GroupBox(label: Label("Prebuilt Runtime", systemImage: "archivebox.fill")) {
                         VStack(alignment: .leading, spacing: 6) {
+                            FeatureRow(icon: "list.bullet.rectangle", title: "Yaagl Wine Menu Registration", desc: "Adds Wine 11.17 ZZZ DX12 (GPTK4.0b2) to Yaagl's Wine menu using the prebuilt archive")
+                            FeatureRow(icon: "arrow.uturn.backward.circle", title: "Backup & Restore", desc: "Preserves Yaagl resources, Wine selection, and Wine directory before installation")
                             FeatureRow(icon: "bolt.fill", title: "Direct3D 12 (GPTK 4.0b2)", desc: "Native D3D12 hardware acceleration via Apple Metal IR")
                             FeatureRow(icon: "cpu.fill", title: "Apple Silicon Native ARM64 Server", desc: "Native arm64 wineserver eliminates Rosetta translation latency")
                             FeatureRow(icon: "memorychip.fill", title: "High-Performance MSync", desc: "Low-overhead synchronization via Mach semaphores and shared memory")
@@ -167,7 +176,7 @@ struct ContentView: View {
                             showingAlert = true
                         }
                     }
-                    .disabled(engine.isWorking)
+                    .disabled(engine.isWorking || engine.status.yaaglIsRunning)
                 }
 
                 Spacer()
@@ -188,7 +197,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(engine.isWorking || !engine.status.yaaglAppExists || !engine.status.yaaglSupportExists)
+                .disabled(engine.isWorking || engine.status.yaaglIsRunning || !engine.status.yaaglAppExists || !engine.status.yaaglSupportExists)
             }
             .padding()
             .background(Color(NSColor.windowBackgroundColor))

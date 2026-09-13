@@ -1,5 +1,5 @@
 import Foundation
-import CryptoKit
+import Darwin
 
 public struct InstallStatus {
     public var yaaglAppExists: Bool = false
@@ -14,20 +14,20 @@ public class InstallerEngine: ObservableObject {
     public static let defaultAppPath = "/Applications/Yaagl ZZZ OS.app"
     public static let defaultSupportPath = ("~/Library/Application Support/Yaagl ZZZ OS" as NSString).expandingTildeInPath
     public static var releaseDownloadUrl: String {
-        let encoded = AsarPatcher.targetArchiveName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? AsarPatcher.targetArchiveName
+        let archiveName = RuntimePackage.legacyArchiveName
+        let encoded = archiveName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? archiveName
         return "https://github.com/dbc-hbin/zzz-wine-d3dmetal-dx12/releases/download/v1.0.0/\(encoded)"
     }
 
     @Published public var appPath: String = defaultAppPath
     @Published public var supportPath: String = defaultSupportPath
-    @Published public var status: InstallStatus = InstallStatus()
-    @Published public var isWorking: Bool = false
-    @Published public var progress: Double = 0.0
-    @Published public var currentStep: String = "Ready"
+    @Published public var status = InstallStatus()
+    @Published public var isWorking = false
+    @Published public var progress = 0.0
+    @Published public var currentStep = "Ready"
     @Published public var logs: [String] = []
 
-    public init() {
-    }
+    public init() {}
 
     public func log(_ message: String) {
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
@@ -36,41 +36,28 @@ public class InstallerEngine: ObservableObject {
             print(formatted)
         }
         if Thread.isMainThread {
-            self.logs.append(formatted)
+            logs.append(formatted)
         } else {
-            DispatchQueue.main.async {
-                self.logs.append(formatted)
-            }
+            DispatchQueue.main.async { self.logs.append(formatted) }
         }
     }
 
     public func refreshStatus() {
         let fileManager = FileManager.default
         var newStatus = InstallStatus()
-
         newStatus.yaaglAppExists = fileManager.fileExists(atPath: appPath)
         newStatus.yaaglSupportExists = fileManager.fileExists(atPath: supportPath)
-
-        let runningProcesses = findYaaglProcesses()
-        newStatus.yaaglIsRunning = !runningProcesses.isEmpty
-
-        let tagPath = (supportPath as NSString).appendingPathComponent(".storage/wine_tag.neustorage")
-        if let tagContent = try? String(contentsOfFile: tagPath, encoding: .utf8) {
-            newStatus.currentWineTag = tagContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        newStatus.yaaglIsRunning = !findYaaglProcesses().isEmpty
+        let tagPath = (storagePath as NSString).appendingPathComponent("wine_tag.neustorage")
+        if let tag = try? String(contentsOfFile: tagPath, encoding: .utf8) {
+            newStatus.currentWineTag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-
-        let appBackup = (appPath as NSString).appendingPathComponent("Contents/Resources/resources.neu.bak")
-        let supportBackup = (supportPath as NSString).appendingPathComponent("resources.neu.bak")
-        newStatus.hasBackup = fileManager.fileExists(atPath: appBackup) || fileManager.fileExists(atPath: supportBackup)
-
+        newStatus.hasBackup = backupPaths.contains { fileManager.fileExists(atPath: $0) }
         newStatus.archiveAvailableLocally = findLocalArchive() != nil
-
         if Thread.isMainThread {
-            self.status = newStatus
+            status = newStatus
         } else {
-            DispatchQueue.main.async {
-                self.status = newStatus
-            }
+            DispatchQueue.main.async { self.status = newStatus }
         }
     }
 
@@ -78,38 +65,62 @@ public class InstallerEngine: ObservableObject {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
         task.arguments = ["-f", pattern]
-        let pipe = Pipe()
-        task.standardOutput = pipe
+        let output = Pipe()
+        task.standardOutput = output
         do {
             try task.run()
             task.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let output = String(data: data, encoding: .utf8) {
-                return output.split(separator: "\n").compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) }
-            }
-        } catch {}
-        return []
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            guard let text = String(data: data, encoding: .utf8) else { return [] }
+            return text.split(separator: "\n").compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) }
+        } catch {
+            return []
+        }
     }
 
     public func findYaaglProcesses() -> [Int32] {
-        let yaaglPids = findProcesses(matching: "Yaagl ZZZ OS")
-        let specificWinePids = findProcesses(matching: "\(supportPath)/wine")
-        return Array(Set(yaaglPids + specificWinePids))
+        let fileManager = FileManager.default
+        let executableDirectory = (appPath as NSString).appendingPathComponent("Contents/MacOS")
+        let executableNames = (try? fileManager.contentsOfDirectory(atPath: executableDirectory)) ?? []
+        let appProcesses = executableNames.flatMap { executableName in
+            findProcesses(matching: "^\(NSRegularExpression.escapedPattern(for: (executableDirectory as NSString).appendingPathComponent(executableName)))([[:space:]]|$)")
+        }
+        let winePattern = "^\(NSRegularExpression.escapedPattern(for: winePath))(/|[[:space:]]|$)"
+        let ignoredProcesses = currentProcessAndAncestors()
+        return Array(Set(appProcesses + findProcesses(matching: winePattern))).filter { !ignoredProcesses.contains($0) }
     }
 
-    public func terminateYaaglProcesses() {
-        log("Terminating running Yaagl and associated Wine processes...")
-        let pids = findYaaglProcesses()
-        for pid in pids {
-            kill(pid, SIGTERM)
+    private func currentProcessAndAncestors() -> Set<Int32> {
+        var processIDs: Set<Int32> = [getpid()]
+        var currentPID = getpid()
+        while currentPID > 1 {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/ps")
+            task.arguments = ["-o", "ppid=", "-p", String(currentPID)]
+            let output = Pipe()
+            task.standardOutput = output
+            do {
+                try task.run()
+                task.waitUntilExit()
+                let data = output.fileHandleForReading.readDataToEndOfFile()
+                guard let parentText = String(data: data, encoding: .utf8),
+                      let parentPID = Int32(parentText.trimmingCharacters(in: .whitespacesAndNewlines)),
+                      parentPID > 1,
+                      !processIDs.contains(parentPID) else {
+                    break
+                }
+                processIDs.insert(parentPID)
+                currentPID = parentPID
+            } catch {
+                break
+            }
         }
-        Thread.sleep(forTimeInterval: 0.5)
-        refreshStatus()
+        return processIDs
     }
 
     public func findLocalArchive() -> String? {
         let fileManager = FileManager.default
-        let names = [AsarPatcher.targetArchiveName, AsarPatcher.legacyArchiveName]
+        let names = [RuntimePackage.targetArchiveName, RuntimePackage.legacyArchiveName]
         var candidates: [String] = []
         for name in names {
             candidates.append(((Bundle.main.resourcePath ?? "") as NSString).appendingPathComponent(name))
@@ -119,48 +130,35 @@ public class InstallerEngine: ObservableObject {
             candidates.append((FileManager.default.currentDirectoryPath as NSString).appendingPathComponent(name))
             candidates.append((("~/Downloads" as NSString).expandingTildeInPath as NSString).appendingPathComponent(name))
         }
-        for path in candidates {
-            if !path.isEmpty && fileManager.fileExists(atPath: path) {
-                return path
-            }
-        }
-        return nil
+        return candidates.first { !$0.isEmpty && fileManager.fileExists(atPath: $0) }
     }
 
-    public func sha256OfFile(atPath path: String) -> String? {
-        guard let stream = InputStream(fileAtPath: path) else { return nil }
-        stream.open()
-        defer { stream.close() }
-        var hasher = SHA256()
-        let bufferSize = 1024 * 1024
-        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-        defer { buffer.deallocate() }
-        while stream.hasBytesAvailable {
-            let read = stream.read(buffer, maxLength: bufferSize)
-            if read > 0 {
-                hasher.update(bufferPointer: UnsafeRawBufferPointer(start: buffer, count: read))
-            } else if read < 0 {
-                return nil
-            }
+    private func bundledArchive() -> String? {
+        let fileManager = FileManager.default
+        let names = [RuntimePackage.targetArchiveName, RuntimePackage.legacyArchiveName]
+        let candidates = names.flatMap { name in
+            [
+                ((Bundle.main.resourcePath ?? "") as NSString).appendingPathComponent(name),
+                ((Bundle.main.bundlePath as NSString).deletingLastPathComponent as NSString).appendingPathComponent(name),
+                (Bundle.main.bundlePath as NSString).appendingPathComponent(name)
+            ]
         }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        return candidates.first { !$0.isEmpty && fileManager.fileExists(atPath: $0) }
     }
 
     public func downloadArchive(destinationPath: String, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let url = URL(string: Self.releaseDownloadUrl) else {
-            completion(.failure(NSError(domain: "Download", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid download URL."])))
+            completion(.failure(NSError(domain: "Install", code: 20, userInfo: [NSLocalizedDescriptionKey: "Invalid runtime download URL."])))
             return
         }
-
-        log("Downloading Wine runtime archive from remote repository...")
-        let session = URLSession(configuration: .default)
-        let downloadTask = session.downloadTask(with: url) { localUrl, response, error in
-            if let error = error {
+        log("Downloading the prebuilt Wine runtime from GitHub Releases...")
+        URLSession.shared.downloadTask(with: url) { temporaryURL, _, error in
+            if let error {
                 completion(.failure(error))
                 return
             }
-            guard let localUrl = localUrl else {
-                completion(.failure(NSError(domain: "Download", code: 2, userInfo: [NSLocalizedDescriptionKey: "Downloaded file not found."])))
+            guard let temporaryURL else {
+                completion(.failure(NSError(domain: "Install", code: 21, userInfo: [NSLocalizedDescriptionKey: "The runtime download did not produce a file."])))
                 return
             }
             do {
@@ -168,176 +166,61 @@ public class InstallerEngine: ObservableObject {
                 if fileManager.fileExists(atPath: destinationPath) {
                     try fileManager.removeItem(atPath: destinationPath)
                 }
-                try fileManager.moveItem(at: localUrl, to: URL(fileURLWithPath: destinationPath))
+                try fileManager.moveItem(at: temporaryURL, to: URL(fileURLWithPath: destinationPath))
                 completion(.success(()))
             } catch {
                 completion(.failure(error))
             }
-        }
-        downloadTask.resume()
+        }.resume()
     }
 
     public func install(completion: @escaping (Bool, String) -> Void) {
         isWorking = true
         progress = 0.0
         logs.removeAll()
-        log("=== Starting Wine 11.17 ZZZ DX12 (GPTK4.0b2) Installation ===")
-
+        log("=== Starting \(RuntimePackage.targetDisplayName) installation ===")
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                // 1. Check running processes
+                try self.requireYaaglInstallation()
+                try self.requireNoRunningYaaglProcesses()
                 DispatchQueue.main.async {
-                    self.currentStep = "[1/5] Checking Yaagl status and running processes..."
-                    self.progress = 0.1
+                    self.currentStep = "[1/4] Preparing the runtime archive..."
+                    self.progress = 0.15
                 }
-                self.log("Yaagl App path: \(self.appPath)")
-                self.log("Yaagl Support path: \(self.supportPath)")
+                let archivePath = try self.installationArchivePath()
 
-                if !FileManager.default.fileExists(atPath: self.appPath) {
-                    throw NSError(domain: "Install", code: 10, userInfo: [NSLocalizedDescriptionKey: "Yaagl ZZZ OS.app not found: \(self.appPath)"])
-                }
-                if !FileManager.default.fileExists(atPath: self.supportPath) {
-                    throw NSError(domain: "Install", code: 11, userInfo: [NSLocalizedDescriptionKey: "Yaagl ZZZ OS Support folder not found: \(self.supportPath)"])
-                }
-
-                if !self.findYaaglProcesses().isEmpty {
-                    self.log("Yaagl or associated Wine processes are active. Terminating safely for installation...")
-                    self.terminateYaaglProcesses()
-                    Thread.sleep(forTimeInterval: 1.0)
-                }
-
-                // 2. Prepare runtime archive
                 DispatchQueue.main.async {
-                    self.currentStep = "[2/5] Preparing runtime archive & verifying SHA-256..."
-                    self.progress = 0.3
+                    self.currentStep = "[2/4] Extracting Wine into a staging directory..."
+                    self.progress = 0.4
                 }
-                let localRuntimesDir = (self.supportPath as NSString).appendingPathComponent("local-runtimes")
-                try FileManager.default.createDirectory(atPath: localRuntimesDir, withIntermediateDirectories: true)
-                let destinationArchive = (localRuntimesDir as NSString).appendingPathComponent(AsarPatcher.targetArchiveName)
+                let stagingDirectory = try self.extractRuntime(at: archivePath)
+                defer { try? FileManager.default.removeItem(atPath: stagingDirectory) }
 
-                if FileManager.default.fileExists(atPath: destinationArchive) {
-                    self.log("Checking existing archive in local-runtimes...")
-                    let hash = self.sha256OfFile(atPath: destinationArchive)
-                    if hash == AsarPatcher.targetArchiveSha256 {
-                        self.log("Archive SHA-256 integrity verified.")
-                    } else {
-                        self.log("Existing archive checksum mismatch. Finding alternative source...")
-                        try FileManager.default.removeItem(atPath: destinationArchive)
+                DispatchQueue.main.async {
+                    self.currentStep = "[3/4] Registering Wine in Yaagl..."
+                    self.progress = 0.6
+                }
+                let backupsCreated = try self.backUpLauncherConfiguration()
+                do {
+                    try self.patchLauncherResources(archivePath: archivePath)
+                    DispatchQueue.main.async {
+                        self.currentStep = "[4/4] Replacing Yaagl's Wine runtime..."
+                        self.progress = 0.8
                     }
+                    try self.replaceWine(withStagedWineAt: (stagingDirectory as NSString).appendingPathComponent("wine"))
+                    try self.activateRegisteredRuntime()
+                } catch {
+                    self.restoreNewlyCreatedBackups(backupsCreated)
+                    throw error
                 }
-
-                if !FileManager.default.fileExists(atPath: destinationArchive) {
-                    if let found = self.findLocalArchive() {
-                        self.log("Copying local archive: \(found)")
-                        try FileManager.default.copyItem(atPath: found, toPath: destinationArchive)
-                    } else {
-                        self.log("No local archive found. Downloading from GitHub Releases...")
-                        let semaphore = DispatchSemaphore(value: 0)
-                        var downloadError: Error?
-                        self.downloadArchive(destinationPath: destinationArchive) { result in
-                            if case .failure(let err) = result {
-                                downloadError = err
-                            }
-                            semaphore.signal()
-                        }
-                        semaphore.wait()
-                        if let err = downloadError {
-                            throw err
-                        }
-                    }
-                    self.log("Verifying SHA-256 checksum of prepared archive...")
-                    let hash = self.sha256OfFile(atPath: destinationArchive)
-                    guard hash == AsarPatcher.targetArchiveSha256 else {
-                        throw NSError(domain: "Install", code: 20, userInfo: [NSLocalizedDescriptionKey: "Archive SHA-256 verification failed: \(hash ?? "none")"])
-                    }
-                    self.log("Archive SHA-256 verified successfully: \(AsarPatcher.targetArchiveSha256)")
-                }
-
-                // 3. Backup resources.neu
-                DispatchQueue.main.async {
-                    self.currentStep = "[3/5] Creating backups of resources.neu..."
-                    self.progress = 0.5
-                }
-                let appNeuPath = (self.appPath as NSString).appendingPathComponent("Contents/Resources/resources.neu")
-                let supportNeuPath = (self.supportPath as NSString).appendingPathComponent("resources.neu")
-
-                let appNeuBackup = appNeuPath + ".bak"
-                let supportNeuBackup = supportNeuPath + ".bak"
-
-                if !FileManager.default.fileExists(atPath: appNeuBackup) && FileManager.default.fileExists(atPath: appNeuPath) {
-                    try FileManager.default.copyItem(atPath: appNeuPath, toPath: appNeuBackup)
-                    self.log("App bundle resources backed up: \(appNeuBackup)")
-                }
-                if !FileManager.default.fileExists(atPath: supportNeuBackup) && FileManager.default.fileExists(atPath: supportNeuPath) {
-                    try FileManager.default.copyItem(atPath: supportNeuPath, toPath: supportNeuBackup)
-                    self.log("Support folder resources backed up: \(supportNeuBackup)")
-                }
-
-                // 4. Patch resources.neu
-                DispatchQueue.main.async {
-                    self.currentStep = "[4/5] Registering 'Wine 11.17 ZZZ DX12 (GPTK4.0b2)' in Yaagl..."
-                    self.progress = 0.7
-                }
-                let home = NSHomeDirectory()
-                self.log("Patching support folder resources.neu...")
-                try AsarPatcher.patch(sourcePath: supportNeuPath, outputPath: supportNeuPath, userHome: home, displayName: AsarPatcher.targetDisplayName)
-
-                if FileManager.default.fileExists(atPath: appNeuPath) {
-                    self.log("Synchronizing app bundle resources.neu...")
-                    try FileManager.default.removeItem(atPath: appNeuPath)
-                    try FileManager.default.copyItem(atPath: supportNeuPath, toPath: appNeuPath)
-                }
-
-                // 5. Extract and configure active wine
-                DispatchQueue.main.async {
-                    self.currentStep = "[5/5] Extracting Wine runtime and configuring environment..."
-                    self.progress = 0.85
-                }
-                let wineDir = (self.supportPath as NSString).appendingPathComponent("wine")
-                let wineBackupDir = (self.supportPath as NSString).appendingPathComponent("wine.bak")
-                if FileManager.default.fileExists(atPath: wineDir) && !FileManager.default.fileExists(atPath: wineBackupDir) {
-                    self.log("Backing up previous Wine directory: \(wineBackupDir)")
-                    try? FileManager.default.moveItem(atPath: wineDir, toPath: wineBackupDir)
-                }
-                try FileManager.default.createDirectory(atPath: wineDir, withIntermediateDirectories: true)
-
-                self.log("Extracting runtime files (tar -xJf)...")
-                let tarTask = Process()
-                tarTask.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-                tarTask.arguments = ["-xJf", destinationArchive, "-C", self.supportPath]
-                try tarTask.run()
-                tarTask.waitUntilExit()
-                if tarTask.terminationStatus != 0 {
-                    throw NSError(domain: "Install", code: 30, userInfo: [NSLocalizedDescriptionKey: "Failed to extract Wine archive (exit status: \(tarTask.terminationStatus))"])
-                }
-                self.log("Wine runtime files extracted successfully.")
-
-                // Set storage keys
-                let storageDir = (self.supportPath as NSString).appendingPathComponent(".storage")
-                try FileManager.default.createDirectory(atPath: storageDir, withIntermediateDirectories: true)
-                let tagPath = (storageDir as NSString).appendingPathComponent("wine_tag.neustorage")
-                let statePath = (storageDir as NSString).appendingPathComponent("wine_state.neustorage")
-
-                let tagBackup = tagPath + ".bak"
-                let stateBackup = statePath + ".bak"
-                if !FileManager.default.fileExists(atPath: tagBackup) && FileManager.default.fileExists(atPath: tagPath) {
-                    try? FileManager.default.copyItem(atPath: tagPath, toPath: tagBackup)
-                }
-                if !FileManager.default.fileExists(atPath: stateBackup) && FileManager.default.fileExists(atPath: statePath) {
-                    try? FileManager.default.copyItem(atPath: statePath, toPath: stateBackup)
-                }
-
-                try AsarPatcher.targetRuntimeId.write(toFile: tagPath, atomically: true, encoding: .utf8)
-                try "ready".write(toFile: statePath, atomically: true, encoding: .utf8)
-                self.log("Active Wine tag set in Yaagl: \(AsarPatcher.targetRuntimeId)")
 
                 DispatchQueue.main.async {
                     self.progress = 1.0
                     self.currentStep = "Installation Complete!"
                     self.isWorking = false
                     self.refreshStatus()
-                    self.log("=== Installation successfully completed! ===")
-                    completion(true, "'Wine 11.17 ZZZ DX12 (GPTK4.0b2)' has been successfully installed and activated in Yaagl ZZZ OS!")
+                    self.log("=== Installation completed successfully ===")
+                    completion(true, "\(RuntimePackage.targetDisplayName) is installed and available in Yaagl's Wine menu.")
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -354,66 +237,300 @@ public class InstallerEngine: ObservableObject {
 
     public func restore(completion: @escaping (Bool, String) -> Void) {
         isWorking = true
+        progress = 0.0
         logs.removeAll()
-        log("=== Starting Backup Restoration ===")
-
+        log("=== Restoring the previous Yaagl Wine configuration ===")
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let appNeuPath = (self.appPath as NSString).appendingPathComponent("Contents/Resources/resources.neu")
-                let supportNeuPath = (self.supportPath as NSString).appendingPathComponent("resources.neu")
-                let appNeuBackup = appNeuPath + ".bak"
-                let supportNeuBackup = supportNeuPath + ".bak"
-
-                if FileManager.default.fileExists(atPath: supportNeuBackup) {
-                    try? FileManager.default.removeItem(atPath: supportNeuPath)
-                    try FileManager.default.copyItem(atPath: supportNeuBackup, toPath: supportNeuPath)
-                    self.log("Support folder resources.neu restored.")
+                try self.requireYaaglInstallation()
+                try self.requireNoRunningYaaglProcesses()
+                guard FileManager.default.fileExists(atPath: self.wineBackupPath) else {
+                    throw NSError(domain: "Install", code: 40, userInfo: [NSLocalizedDescriptionKey: "No previous Wine runtime backup is available."])
                 }
-                if FileManager.default.fileExists(atPath: appNeuBackup) {
-                    try? FileManager.default.removeItem(atPath: appNeuPath)
-                    try FileManager.default.copyItem(atPath: appNeuBackup, toPath: appNeuPath)
-                    self.log("App bundle resources.neu restored.")
-                }
-
-                let wineDir = (self.supportPath as NSString).appendingPathComponent("wine")
-                let wineBackupDir = (self.supportPath as NSString).appendingPathComponent("wine.bak")
-                if FileManager.default.fileExists(atPath: wineBackupDir) {
-                    try? FileManager.default.removeItem(atPath: wineDir)
-                    try FileManager.default.moveItem(atPath: wineBackupDir, toPath: wineDir)
-                    self.log("Previous Wine directory restored.")
-                }
-
-                let storageDir = (self.supportPath as NSString).appendingPathComponent(".storage")
-                let tagPath = (storageDir as NSString).appendingPathComponent("wine_tag.neustorage")
-                let statePath = (storageDir as NSString).appendingPathComponent("wine_state.neustorage")
-                let tagBackup = tagPath + ".bak"
-                let stateBackup = statePath + ".bak"
-                if FileManager.default.fileExists(atPath: tagBackup) {
-                    try? FileManager.default.removeItem(atPath: tagPath)
-                    try? FileManager.default.copyItem(atPath: tagBackup, toPath: tagPath)
-                    self.log("Previous Wine tag restored.")
-                }
-                if FileManager.default.fileExists(atPath: stateBackup) {
-                    try? FileManager.default.removeItem(atPath: statePath)
-                    try? FileManager.default.copyItem(atPath: stateBackup, toPath: statePath)
-                    self.log("Previous Wine state restored.")
-                }
-
+                try self.restoreLauncherConfiguration()
+                try self.restoreWineBackup()
+                try self.removeBackups()
                 DispatchQueue.main.async {
                     self.isWorking = false
+                    self.progress = 1.0
                     self.currentStep = "Restore Complete"
                     self.refreshStatus()
-                    self.log("=== Backup restoration completed successfully! ===")
-                    completion(true, "Restored to previous configuration from backup.")
+                    self.log("=== Previous Yaagl Wine configuration restored ===")
+                    completion(true, "Restored Yaagl's previous Wine runtime and launcher configuration.")
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.isWorking = false
+                    self.progress = 0.0
+                    self.currentStep = "Restore Failed"
                     self.refreshStatus()
                     self.log("Restore failed: \(error.localizedDescription)")
                     completion(false, error.localizedDescription)
                 }
             }
+        }
+    }
+
+    private var storagePath: String {
+        (supportPath as NSString).appendingPathComponent(".storage")
+    }
+
+    private var supportResourcesPath: String {
+        (supportPath as NSString).appendingPathComponent("resources.neu")
+    }
+
+    private var appResourcesPath: String {
+        (appPath as NSString).appendingPathComponent("Contents/Resources/resources.neu")
+    }
+
+    private var winePath: String {
+        (supportPath as NSString).appendingPathComponent("wine")
+    }
+
+    private var wineBackupPath: String {
+        winePath + ".bak"
+    }
+
+    private var backupPaths: [String] {
+        [supportResourcesPath + ".bak", appResourcesPath + ".bak", wineBackupPath,
+         (storagePath as NSString).appendingPathComponent("wine_tag.neustorage.bak"),
+         (storagePath as NSString).appendingPathComponent("wine_state.neustorage.bak")]
+    }
+
+    private func requireYaaglInstallation() throws {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: appPath) else {
+            throw NSError(domain: "Install", code: 10, userInfo: [NSLocalizedDescriptionKey: "Yaagl ZZZ OS.app was not found at \(appPath)."])
+        }
+        guard fileManager.fileExists(atPath: supportPath) else {
+            throw NSError(domain: "Install", code: 11, userInfo: [NSLocalizedDescriptionKey: "Yaagl ZZZ OS support folder was not found at \(supportPath)."])
+        }
+    }
+
+    private func requireNoRunningYaaglProcesses() throws {
+        guard findYaaglProcesses().isEmpty else {
+            throw NSError(domain: "Install", code: 12, userInfo: [NSLocalizedDescriptionKey: "Quit Yaagl ZZZ OS and its Wine processes before changing the runtime."])
+        }
+    }
+
+    private func installationArchivePath() throws -> String {
+        let fileManager = FileManager.default
+        let localRuntimes = (supportPath as NSString).appendingPathComponent("local-runtimes")
+        try fileManager.createDirectory(atPath: localRuntimes, withIntermediateDirectories: true)
+        let destination = (localRuntimes as NSString).appendingPathComponent(RuntimePackage.targetArchiveName)
+
+        if let bundledArchive = bundledArchive() {
+            log("Copying bundled runtime archive to Yaagl: \(bundledArchive)")
+            let temporaryDestination = destination + ".tmp.\(UUID().uuidString)"
+            do {
+                try fileManager.copyItem(atPath: bundledArchive, toPath: temporaryDestination)
+                if fileManager.fileExists(atPath: destination) {
+                    _ = try fileManager.replaceItemAt(URL(fileURLWithPath: destination), withItemAt: URL(fileURLWithPath: temporaryDestination))
+                } else {
+                    try fileManager.moveItem(atPath: temporaryDestination, toPath: destination)
+                }
+            } catch {
+                try? fileManager.removeItem(atPath: temporaryDestination)
+                throw error
+            }
+            return destination
+        }
+
+        if fileManager.fileExists(atPath: destination) {
+            log("Using the existing local runtime archive: \(destination)")
+            return destination
+        }
+        if let source = findLocalArchive() {
+            log("Copying prebuilt runtime archive to Yaagl: \(source)")
+            try fileManager.copyItem(atPath: source, toPath: destination)
+            return destination
+        }
+
+        let downloadComplete = DispatchSemaphore(value: 0)
+        var downloadError: Error?
+        downloadArchive(destinationPath: destination) { result in
+            if case .failure(let error) = result {
+                downloadError = error
+            }
+            downloadComplete.signal()
+        }
+        downloadComplete.wait()
+        if let downloadError {
+            throw downloadError
+        }
+        return destination
+    }
+
+    private func extractRuntime(at archivePath: String) throws -> String {
+        let stagingDirectory = (supportPath as NSString).appendingPathComponent(".wine-install-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(atPath: stagingDirectory, withIntermediateDirectories: false)
+        do {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+            task.arguments = ["-xJf", archivePath, "-C", stagingDirectory]
+            let standardError = Pipe()
+            task.standardError = standardError
+            try task.run()
+            task.waitUntilExit()
+            guard task.terminationStatus == 0 else {
+                let output = String(data: standardError.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let details = output.map { ": \($0)" } ?? ""
+                throw NSError(domain: "Install", code: 30, userInfo: [NSLocalizedDescriptionKey: "Failed to extract the Wine runtime (tar exit status \(task.terminationStatus))\(details)"])
+            }
+            var isDirectory: ObjCBool = false
+            let stagedWine = (stagingDirectory as NSString).appendingPathComponent("wine")
+            guard FileManager.default.fileExists(atPath: stagedWine, isDirectory: &isDirectory), isDirectory.boolValue else {
+                throw NSError(domain: "Install", code: 31, userInfo: [NSLocalizedDescriptionKey: "The runtime archive does not contain the expected wine directory."])
+            }
+            return stagingDirectory
+        } catch {
+            try? FileManager.default.removeItem(atPath: stagingDirectory)
+            throw error
+        }
+    }
+
+    private func backUpLauncherConfiguration() throws -> [String] {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: supportResourcesPath) else {
+            throw NSError(domain: "Install", code: 50, userInfo: [NSLocalizedDescriptionKey: "Yaagl support resources.neu was not found."])
+        }
+        guard fileManager.fileExists(atPath: appResourcesPath) else {
+            throw NSError(domain: "Install", code: 51, userInfo: [NSLocalizedDescriptionKey: "Yaagl app resources.neu was not found."])
+        }
+        try fileManager.createDirectory(atPath: storagePath, withIntermediateDirectories: true)
+        let paths = [supportResourcesPath, appResourcesPath,
+                     (storagePath as NSString).appendingPathComponent("wine_tag.neustorage"),
+                     (storagePath as NSString).appendingPathComponent("wine_state.neustorage")]
+        var created: [String] = []
+        for path in paths {
+            let backup = path + ".bak"
+            if fileManager.fileExists(atPath: backup) { continue }
+            if fileManager.fileExists(atPath: path) {
+                try fileManager.copyItem(atPath: path, toPath: backup)
+            } else {
+                guard fileManager.createFile(atPath: backup, contents: Data()) else {
+                    throw NSError(domain: "Install", code: 52, userInfo: [NSLocalizedDescriptionKey: "Could not create a backup marker for \(path)."])
+                }
+            }
+            created.append(backup)
+        }
+        return created
+    }
+
+    private func patchLauncherResources(archivePath: String) throws {
+        try AsarPatcher.patch(sourcePath: supportResourcesPath, outputPath: supportResourcesPath, archivePath: archivePath, displayName: RuntimePackage.targetDisplayName)
+        try AsarPatcher.patch(sourcePath: appResourcesPath, outputPath: appResourcesPath, archivePath: archivePath, displayName: RuntimePackage.targetDisplayName)
+    }
+
+    private func replaceWine(withStagedWineAt stagedWine: String) throws {
+        let fileManager = FileManager.default
+        let displacedWine = (supportPath as NSString).appendingPathComponent(".wine-replaced-\(UUID().uuidString)")
+        let hadWine = fileManager.fileExists(atPath: winePath)
+        let hasBackup = fileManager.fileExists(atPath: wineBackupPath)
+        if hadWine {
+            let destination = hasBackup ? displacedWine : wineBackupPath
+            log(hasBackup ? "Temporarily moving the active Wine runtime aside." : "Preserving the previous Wine runtime.")
+            try fileManager.moveItem(atPath: winePath, toPath: destination)
+        }
+        do {
+            try fileManager.moveItem(atPath: stagedWine, toPath: winePath)
+        } catch {
+            if hadWine {
+                let displaced = hasBackup ? displacedWine : wineBackupPath
+                if fileManager.fileExists(atPath: displaced) {
+                    do {
+                        try fileManager.moveItem(atPath: displaced, toPath: winePath)
+                    } catch {
+                        throw NSError(domain: "Install", code: 32, userInfo: [NSLocalizedDescriptionKey: "Could not install the new Wine runtime and could not restore the previous runtime: \(error.localizedDescription)"])
+                    }
+                }
+            }
+            throw error
+        }
+        if hadWine && hasBackup {
+            try fileManager.removeItem(atPath: displacedWine)
+        }
+    }
+
+    private func activateRegisteredRuntime() throws {
+        let tagPath = (storagePath as NSString).appendingPathComponent("wine_tag.neustorage")
+        let statePath = (storagePath as NSString).appendingPathComponent("wine_state.neustorage")
+        try RuntimePackage.targetRuntimeId.write(toFile: tagPath, atomically: true, encoding: .utf8)
+        try "ready".write(toFile: statePath, atomically: true, encoding: .utf8)
+        log("Selected \(RuntimePackage.targetDisplayName) in Yaagl's Wine menu.")
+    }
+
+    private func restoreWineBackup() throws {
+        let fileManager = FileManager.default
+        let displacedWine = (supportPath as NSString).appendingPathComponent(".wine-restore-\(UUID().uuidString)")
+        let hadWine = fileManager.fileExists(atPath: winePath)
+        if hadWine {
+            try fileManager.moveItem(atPath: winePath, toPath: displacedWine)
+        }
+        do {
+            try fileManager.moveItem(atPath: wineBackupPath, toPath: winePath)
+        } catch {
+            if hadWine, fileManager.fileExists(atPath: displacedWine) {
+                do {
+                    try fileManager.moveItem(atPath: displacedWine, toPath: winePath)
+                } catch {
+                    throw NSError(domain: "Install", code: 41, userInfo: [NSLocalizedDescriptionKey: "Could not restore the previous Wine runtime and could not restore the installed runtime: \(error.localizedDescription)"])
+                }
+            }
+            throw error
+        }
+        if hadWine {
+            try fileManager.removeItem(atPath: displacedWine)
+        }
+    }
+
+    private func restoreLauncherConfiguration() throws {
+        for path in [supportResourcesPath, appResourcesPath,
+                     (storagePath as NSString).appendingPathComponent("wine_tag.neustorage"),
+                     (storagePath as NSString).appendingPathComponent("wine_state.neustorage")] {
+            let backup = path + ".bak"
+            guard FileManager.default.fileExists(atPath: backup) else { continue }
+            let attributes = try FileManager.default.attributesOfItem(atPath: backup)
+            if let size = attributes[.size] as? NSNumber, size.intValue == 0 {
+                if FileManager.default.fileExists(atPath: path) {
+                    try FileManager.default.removeItem(atPath: path)
+                }
+            } else {
+                if FileManager.default.fileExists(atPath: path) {
+                    try FileManager.default.removeItem(atPath: path)
+                }
+                try FileManager.default.copyItem(atPath: backup, toPath: path)
+            }
+        }
+    }
+
+    private func restoreNewlyCreatedBackups(_ backups: [String]) {
+        for backup in backups {
+            let path = String(backup.dropLast(4))
+            if FileManager.default.fileExists(atPath: backup) {
+                try? restoreBackup(at: backup, to: path)
+                try? FileManager.default.removeItem(atPath: backup)
+            }
+        }
+    }
+
+    private func restoreBackup(at backup: String, to path: String) throws {
+        let attributes = try FileManager.default.attributesOfItem(atPath: backup)
+        if let size = attributes[.size] as? NSNumber, size.intValue == 0 {
+            if FileManager.default.fileExists(atPath: path) {
+                try FileManager.default.removeItem(atPath: path)
+            }
+        } else {
+            if FileManager.default.fileExists(atPath: path) {
+                try FileManager.default.removeItem(atPath: path)
+            }
+            try FileManager.default.copyItem(atPath: backup, toPath: path)
+        }
+    }
+
+    private func removeBackups() throws {
+        for backup in backupPaths where FileManager.default.fileExists(atPath: backup) {
+            try FileManager.default.removeItem(atPath: backup)
         }
     }
 }

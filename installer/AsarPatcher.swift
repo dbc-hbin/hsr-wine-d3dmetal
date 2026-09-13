@@ -1,218 +1,299 @@
-import Foundation
 import CryptoKit
+import Foundation
+import JavaScriptCore
 
 public enum AsarPatcherError: LocalizedError {
     case invalidFileFormat(String)
     case headerParseFailed(String)
-    case jsFileNotFound
+    case frontendNotFound
+    case resourceMissing(String)
+    case transformFailed(String)
     case stringDecodingFailed
-    case insertionAnchorNotFound
-    case serializationFailed
 
     public var errorDescription: String? {
         switch self {
-        case .invalidFileFormat(let msg): return "Invalid ASAR file format: \(msg)"
-        case .headerParseFailed(let msg): return "Header parse failed: \(msg)"
-        case .jsFileNotFound: return "Could not find index.js in resources.neu assets."
-        case .stringDecodingFailed: return "Could not decode JS source code as UTF-8."
-        case .insertionAnchorNotFound: return "Could not find insertion anchor for Wine distributions."
-        case .serializationFailed: return "JSON serialization failed."
+        case .invalidFileFormat(let message): return "Invalid ASAR file format: \(message)"
+        case .headerParseFailed(let message): return "ASAR header parse failed: \(message)"
+        case .frontendNotFound: return "Could not find Yaagl's Wine frontend script in resources.neu."
+        case .resourceMissing(let name): return "Installer resource is missing: \(name)."
+        case .transformFailed(let message): return "Could not update Yaagl's Wine frontend: \(message)"
+        case .stringDecodingFailed: return "Could not decode Yaagl's frontend JavaScript as UTF-8."
         }
     }
 }
 
 public struct AsarPatcher {
-    public static let targetRuntimeId = "11.17-zzz-dx12-tuned-stage-parallel-cache-warmup-cursor-rollback-gptk4b2-arm64server"
-    public static let targetDisplayName = "Wine 11.17 ZZZ DX12 (GPTK4.0b2)"
-    public static let targetArchiveName = "Wine 11.17 ZZZ DX12 (GPTK4.0b2).tar.xz"
-    public static let legacyArchiveName = "wine-11.17-git.913e31f-zzz-dx12-tuned-d3dmetal-cache-warmup-cursor-rollback-gptk4b2.tar.xz"
-    public static let targetArchiveSha256 = "bdc0819cc8e196b139b2352029f7b5d6423a07fdc4d148b238f721f968d1502d"
-    public static let targetArchiveSize = 241864652
-    public static let targetRuntimeManifestSha256 = "f16ff088947017c05c69bda1e332659119f92d244ffbab5d2bbaedb46689c568"
+    private struct ArchiveMember {
+        let path: [String]
+        let offset: Int
+        let size: Int
+    }
 
-    public static func patch(
-        sourcePath: String,
-        outputPath: String,
-        userHome: String,
-        displayName: String = targetDisplayName
-    ) throws {
-        let sourceData = try Data(contentsOf: URL(fileURLWithPath: sourcePath))
-        guard sourceData.count >= 16 else {
-            throw AsarPatcherError.invalidFileFormat("File is too small.")
+    public static func patch(sourcePath: String, outputPath: String, archivePath: String, displayName: String) throws {
+        let sourceURL = URL(fileURLWithPath: sourcePath)
+        let sourceData = try Data(contentsOf: sourceURL)
+        let headerSize = try uint32(sourceData, at: 8, description: "header size")
+        let headerLength = try uint32(sourceData, at: 12, description: "header JSON size")
+        let payloadStart = try checkedAdd(12, Int(headerSize), description: "payload offset")
+        let headerEnd = try checkedAdd(16, Int(headerLength), description: "header JSON end")
+        guard payloadStart <= sourceData.count, headerEnd <= payloadStart else {
+            throw AsarPatcherError.invalidFileFormat("Header exceeds file bounds.")
         }
 
-        let headerSizePlus4 = Int(sourceData.subdata(in: 8..<12).withUnsafeBytes { $0.load(as: UInt32.self) })
-        let headerJsonLen = Int(sourceData.subdata(in: 12..<16).withUnsafeBytes { $0.load(as: UInt32.self) })
-        let payloadStart = 16 + headerSizePlus4 - 4
-
-        guard sourceData.count >= payloadStart else {
-            throw AsarPatcherError.invalidFileFormat("Header size exceeds file size.")
+        var header: [String: Any]
+        do {
+            header = try JSONSerialization.jsonObject(with: sourceData.subdata(in: 16..<headerEnd)) as? [String: Any] ?? [:]
+        } catch {
+            throw AsarPatcherError.headerParseFailed(error.localizedDescription)
+        }
+        guard header["files"] is [String: Any] else {
+            throw AsarPatcherError.headerParseFailed("Missing files dictionary.")
         }
 
-        let headerData = sourceData.subdata(in: 16..<(16 + headerJsonLen))
-        guard var headerObj = try JSONSerialization.jsonObject(with: headerData) as? [String: Any],
-              var files = headerObj["files"] as? [String: Any],
-              var dist = files["dist"] as? [String: Any],
-              var distFiles = dist["files"] as? [String: Any],
-              var assets = distFiles["assets"] as? [String: Any],
-              var assetFiles = assets["files"] as? [String: Any] else {
-            throw AsarPatcherError.headerParseFailed("Could not navigate dist/assets structure.")
-        }
+        let members = try javascriptMembers(in: header)
+        let context = try transformContext()
+        let archiveURL = localArchiveURL(for: archivePath)
+        var frontendMatched = false
+        var replacement: (member: ArchiveMember, source: Data)?
 
-        guard let jsKey = assetFiles.keys.first(where: { $0.hasPrefix("index.") && $0.hasSuffix(".js") }),
-              var jsMeta = assetFiles[jsKey] as? [String: Any],
-              let jsSize = jsMeta["size"] as? Int,
-              let jsOffsetStr = jsMeta["offset"] as? String,
-              let jsOffset = Int(jsOffsetStr) else {
-            throw AsarPatcherError.jsFileNotFound
-        }
-
-        let jsEnd = payloadStart + jsOffset + jsSize
-        guard sourceData.count >= jsEnd else {
-            throw AsarPatcherError.invalidFileFormat("index.js data exceeds file bounds.")
-        }
-
-        let jsData = sourceData.subdata(in: (payloadStart + jsOffset)..<jsEnd)
-        guard var jsString = String(data: jsData, encoding: .utf8) else {
-            throw AsarPatcherError.stringDecodingFailed
-        }
-
-        let encodedArchive = targetArchiveName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? targetArchiveName
-        let localUrl = "file://\(userHome)/Library/Application%20Support/Yaagl%20ZZZ%20OS/local-runtimes/\(encodedArchive)"
-
-        let newEntry: [String: Any] = [
-            "id": targetRuntimeId,
-            "displayName": displayName,
-            "remoteUrl": localUrl,
-            "archiveSha256": targetArchiveSha256,
-            "archiveSize": targetArchiveSize,
-            "wineVersion": "wine-11.17",
-            "runtimeManifestSha256": targetRuntimeManifestSha256,
-            "attributes": [
-                "renderBackend": "d3dmetal",
-                "winePath": "wine",
-                "precomposedD3DMetal": true,
-                "d3dMetalGraphicsCache": true
-            ]
-        ]
-
-        let newEntryData = try JSONSerialization.data(withJSONObject: newEntry, options: [.sortedKeys])
-        guard let newEntryJson = String(data: newEntryData, encoding: .utf8) else {
-            throw AsarPatcherError.serializationFailed
-        }
-
-        if let idRange = jsString.range(of: "\"id\":\"\(targetRuntimeId)\"") {
-            var start = idRange.lowerBound
-            while start > jsString.startIndex && jsString[start] != "{" {
-                start = jsString.index(before: start)
+        for member in members.sorted(by: { $0.offset < $1.offset }) {
+            let start = try checkedAdd(payloadStart, member.offset, description: "JavaScript member offset")
+            let end = try checkedAdd(start, member.size, description: "JavaScript member end")
+            guard end <= sourceData.count else {
+                throw AsarPatcherError.invalidFileFormat("JavaScript member \(member.path.joined(separator: "/")) exceeds file bounds.")
             }
-            var depth = 0
-            var end = start
-            while end < jsString.endIndex {
-                if jsString[end] == "{" { depth += 1 }
-                else if jsString[end] == "}" {
-                    depth -= 1
-                    if depth == 0 {
-                        end = jsString.index(after: end)
-                        break
-                    }
+            guard let javascript = String(data: sourceData.subdata(in: start..<end), encoding: .utf8) else {
+                throw AsarPatcherError.stringDecodingFailed
+            }
+            guard javascript.contains("doStreamingDownload"), javascript.contains("remoteUrl"), javascript.contains("wine_state") else {
+                continue
+            }
+            frontendMatched = true
+
+            let transformed = try transform(javascript, in: context, archiveURL: archiveURL, displayName: displayName)
+            if transformed != javascript {
+                guard replacement == nil else {
+                    throw AsarPatcherError.transformFailed("Multiple frontend scripts matched the Wine installer.")
                 }
-                end = jsString.index(after: end)
+                replacement = (member, Data(transformed.utf8))
             }
-            jsString.replaceSubrange(start..<end, with: newEntryJson)
-        } else if let p3Range = jsString.range(of: "11.0-d3dmetal-gptk4.0b2-rtx5060-i1") {
-            var pos = p3Range.lowerBound
-            while pos > jsString.startIndex && jsString[pos] != "{" {
-                pos = jsString.index(before: pos)
+        }
+
+        guard frontendMatched else {
+            throw AsarPatcherError.frontendNotFound
+        }
+        guard let replacement else {
+            if sourcePath != outputPath {
+                try atomicallyWrite(sourceData, to: outputPath)
             }
-            var depth = 0
-            while pos < jsString.endIndex {
-                if jsString[pos] == "{" { depth += 1 }
-                else if jsString[pos] == "}" {
-                    depth -= 1
-                    if depth == 0 {
-                        pos = jsString.index(after: pos)
-                        break
-                    }
+            return
+        }
+
+        let oldMetadata = try metadata(for: replacement.member.path, in: header)
+        let replacementSize = replacement.source.count
+        let sizeDelta = replacementSize - replacement.member.size
+        var replacementMetadata = oldMetadata
+        replacementMetadata["size"] = replacementSize
+        replacementMetadata["integrity"] = integrity(for: replacement.source, preserving: oldMetadata["integrity"])
+        try replaceMetadata(replacementMetadata, at: replacement.member.path, in: &header)
+        try adjustOffsets(in: &header, after: replacement.member.offset, by: sizeDelta)
+
+        let replacementHeader: Data
+        do {
+            replacementHeader = try JSONSerialization.data(withJSONObject: header)
+        } catch {
+            throw AsarPatcherError.headerParseFailed(error.localizedDescription)
+        }
+        let padding = (4 - (replacementHeader.count % 4)) % 4
+        let newHeaderSize = replacementHeader.count + padding + 4
+        guard newHeaderSize <= Int(UInt32.max), replacementHeader.count <= Int(UInt32.max) else {
+            throw AsarPatcherError.invalidFileFormat("Updated ASAR header is too large.")
+        }
+
+        let replacementStart = try checkedAdd(payloadStart, replacement.member.offset, description: "replacement member offset")
+        let replacementEnd = try checkedAdd(replacementStart, replacement.member.size, description: "replacement member end")
+        var output = Data()
+        append(UInt32(4), to: &output)
+        append(UInt32(newHeaderSize + 4), to: &output)
+        append(UInt32(newHeaderSize), to: &output)
+        append(UInt32(replacementHeader.count), to: &output)
+        output.append(replacementHeader)
+        output.append(Data(repeating: 0, count: padding))
+        output.append(sourceData.subdata(in: payloadStart..<replacementStart))
+        output.append(replacement.source)
+        output.append(sourceData.subdata(in: replacementEnd..<sourceData.count))
+        try atomicallyWrite(output, to: outputPath)
+    }
+
+    private static func uint32(_ data: Data, at offset: Int, description: String) throws -> UInt32 {
+        guard offset >= 0, offset <= data.count - 4 else {
+            throw AsarPatcherError.invalidFileFormat("Missing \(description).")
+        }
+        return UInt32(data[offset])
+            | UInt32(data[offset + 1]) << 8
+            | UInt32(data[offset + 2]) << 16
+            | UInt32(data[offset + 3]) << 24
+    }
+
+    private static func checkedAdd(_ left: Int, _ right: Int, description: String) throws -> Int {
+        let (result, overflow) = left.addingReportingOverflow(right)
+        guard !overflow, result >= 0 else {
+            throw AsarPatcherError.invalidFileFormat("Invalid \(description).")
+        }
+        return result
+    }
+
+    private static func javascriptMembers(in header: [String: Any]) throws -> [ArchiveMember] {
+        func members(in directory: [String: Any], path: [String]) throws -> [ArchiveMember] {
+            guard let files = directory["files"] as? [String: Any] else { return [] }
+            var result: [ArchiveMember] = []
+            for (name, value) in files {
+                guard let entry = value as? [String: Any] else {
+                    throw AsarPatcherError.headerParseFailed("Invalid entry at \((path + [name]).joined(separator: "/")).")
                 }
-                pos = jsString.index(after: pos)
+                if entry["files"] != nil {
+                    result += try members(in: entry, path: path + [name])
+                } else if name.hasSuffix(".js"), let offset = integer(entry["offset"]), let size = integer(entry["size"]), offset >= 0, size >= 0 {
+                    result.append(ArchiveMember(path: path + [name], offset: offset, size: size))
+                }
             }
-            jsString.insert(contentsOf: ",\(newEntryJson)", at: pos)
+            return result
+        }
+        return try members(in: header, path: [])
+    }
+
+    private static func integer(_ value: Any?) -> Int? {
+        if let integer = value as? Int { return integer }
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = value as? String { return Int(string) }
+        return nil
+    }
+
+    private static func metadata(for path: [String], in header: [String: Any]) throws -> [String: Any] {
+        guard let name = path.first, let files = header["files"] as? [String: Any], let entry = files[name] as? [String: Any] else {
+            throw AsarPatcherError.headerParseFailed("Missing metadata for \(path.joined(separator: "/")).")
+        }
+        if path.count == 1 { return entry }
+        return try metadata(for: Array(path.dropFirst()), in: entry)
+    }
+
+    private static func replaceMetadata(_ metadata: [String: Any], at path: [String], in directory: inout [String: Any]) throws {
+        guard let name = path.first, var files = directory["files"] as? [String: Any] else {
+            throw AsarPatcherError.headerParseFailed("Missing metadata path \(path.joined(separator: "/")).")
+        }
+        if path.count == 1 {
+            files[name] = metadata
         } else {
-            throw AsarPatcherError.insertionAnchorNotFound
-        }
-
-        let newJsData = jsString.data(using: .utf8)!
-        let sizeDelta = newJsData.count - jsData.count
-
-        jsMeta["size"] = newJsData.count
-        let jsHash = SHA256.hash(data: newJsData).map { String(format: "%02x", $0) }.joined()
-        jsMeta["integrity"] = [
-            "algorithm": "SHA256",
-            "hash": jsHash
-        ]
-        assetFiles[jsKey] = jsMeta
-        assets["files"] = assetFiles
-        distFiles["assets"] = assets
-        dist["files"] = distFiles
-        files["dist"] = dist
-        headerObj["files"] = files
-
-        func adjustOffsets(in dict: inout [String: Any]) {
-            guard var f = dict["files"] as? [String: Any] else { return }
-            for (k, v) in f {
-                if var sub = v as? [String: Any] {
-                    if sub["files"] != nil {
-                        adjustOffsets(in: &sub)
-                        f[k] = sub
-                    } else if let offStr = sub["offset"] as? String, let off = Int(offStr) {
-                        if off > jsOffset {
-                            sub["offset"] = String(off + sizeDelta)
-                            f[k] = sub
-                        }
-                    }
-                }
+            guard var child = files[name] as? [String: Any] else {
+                throw AsarPatcherError.headerParseFailed("Missing metadata path \(path.joined(separator: "/")).")
             }
-            dict["files"] = f
+            try replaceMetadata(metadata, at: Array(path.dropFirst()), in: &child)
+            files[name] = child
         }
-        adjustOffsets(in: &headerObj)
+        directory["files"] = files
+    }
 
-        let newHeaderJsonData = try JSONSerialization.data(withJSONObject: headerObj, options: [])
-        let padLen = (4 - (newHeaderJsonData.count % 4)) % 4
-        let headerSize = newHeaderJsonData.count + padLen
-
-        var outputData = Data()
-        var u4: UInt32 = 4
-        var h8: UInt32 = UInt32(headerSize + 8)
-        var h4: UInt32 = UInt32(headerSize + 4)
-        var jsonLen: UInt32 = UInt32(newHeaderJsonData.count)
-
-        outputData.append(Data(bytes: &u4, count: 4))
-        outputData.append(Data(bytes: &h8, count: 4))
-        outputData.append(Data(bytes: &h4, count: 4))
-        outputData.append(Data(bytes: &jsonLen, count: 4))
-        outputData.append(newHeaderJsonData)
-        if padLen > 0 {
-            outputData.append(Data(repeating: 0, count: padLen))
+    private static func adjustOffsets(in directory: inout [String: Any], after offset: Int, by delta: Int) throws {
+        guard delta != 0, var files = directory["files"] as? [String: Any] else { return }
+        for (name, value) in files {
+            guard var entry = value as? [String: Any] else {
+                throw AsarPatcherError.headerParseFailed("Invalid ASAR entry \(name).")
+            }
+            if entry["files"] != nil {
+                try adjustOffsets(in: &entry, after: offset, by: delta)
+            } else if let originalOffset = integer(entry["offset"]), originalOffset > offset {
+                let adjusted = try checkedAdd(originalOffset, delta, description: "member offset")
+                entry["offset"] = String(adjusted)
+            }
+            files[name] = entry
         }
+        directory["files"] = files
+    }
 
-        // Preserve any payload preceding index.js if jsOffset > 0
-        if jsOffset > 0 {
-            let prefixPayload = sourceData.subdata(in: payloadStart..<(payloadStart + jsOffset))
-            outputData.append(prefixPayload)
+    private static func integrity(for data: Data, preserving original: Any?) -> [String: Any] {
+        let original = original as? [String: Any]
+        let blockSize = max(integer(original?["blockSize"]) ?? 4 * 1024 * 1024, 1)
+        let hash = hexadecimal(SHA256.hash(data: data))
+        var blocks: [String] = []
+        for start in stride(from: 0, to: data.count, by: blockSize) {
+            let end = min(start + blockSize, data.count)
+            blocks.append(hexadecimal(SHA256.hash(data: data.subdata(in: start..<end))))
         }
+        return ["algorithm": "SHA256", "hash": hash, "blockSize": blockSize, "blocks": blocks]
+    }
 
-        outputData.append(newJsData)
-        let remainingOriginalPayload = sourceData.subdata(in: (payloadStart + jsOffset + jsSize)..<sourceData.count)
-        outputData.append(remainingOriginalPayload)
+    private static func hexadecimal(_ digest: SHA256.Digest) -> String {
+        digest.map { String(format: "%02x", $0) }.joined()
+    }
 
-        let tempUrl = URL(fileURLWithPath: outputPath + ".tmp.\(UUID().uuidString)")
-        try outputData.write(to: tempUrl)
-        let destinationUrl = URL(fileURLWithPath: outputPath)
+    private static func append(_ value: UInt32, to data: inout Data) {
+        data.append(UInt8(value & 0xff))
+        data.append(UInt8((value >> 8) & 0xff))
+        data.append(UInt8((value >> 16) & 0xff))
+        data.append(UInt8((value >> 24) & 0xff))
+    }
+
+    private static func atomicallyWrite(_ data: Data, to outputPath: String) throws {
+        let destination = URL(fileURLWithPath: outputPath)
+        let temporary = destination.deletingLastPathComponent().appendingPathComponent(".\(destination.lastPathComponent).tmp.\(UUID().uuidString)")
+        try data.write(to: temporary, options: .withoutOverwriting)
         if FileManager.default.fileExists(atPath: outputPath) {
-            _ = try FileManager.default.replaceItemAt(destinationUrl, withItemAt: tempUrl)
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
         } else {
-            try FileManager.default.moveItem(at: tempUrl, to: destinationUrl)
+            try FileManager.default.moveItem(at: temporary, to: destination)
         }
+    }
+
+    private static func localArchiveURL(for archivePath: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~/")
+        let path = URL(fileURLWithPath: archivePath).path
+        let encodedPath = path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
+        return "file://\(encodedPath)"
+    }
+
+    private static func transformContext() throws -> JSContext {
+        guard let context = JSContext() else {
+            throw AsarPatcherError.transformFailed("Could not create a JavaScript context.")
+        }
+        var exception: String?
+        context.exceptionHandler = { _, value in exception = value?.toString() }
+        for resource in ["typescript.js", "AsarTransform.js"] {
+            let contents = try String(contentsOf: try resourceURL(resource), encoding: .utf8)
+            _ = context.evaluateScript(contents, withSourceURL: URL(fileURLWithPath: resource))
+            if let exception {
+                throw AsarPatcherError.transformFailed("\(resource): \(exception)")
+            }
+        }
+        guard context.objectForKeyedSubscript("__asarTransform") != nil else {
+            throw AsarPatcherError.transformFailed("Bundled transform did not load.")
+        }
+        return context
+    }
+
+    private static func resourceURL(_ resource: String) throws -> URL {
+        let fileManager = FileManager.default
+        if let bundleResource = Bundle.main.resourceURL?.appendingPathComponent(resource), fileManager.isReadableFile(atPath: bundleResource.path) {
+            return bundleResource
+        }
+        let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let cliResource = executable.deletingLastPathComponent().appendingPathComponent("resources", isDirectory: true).appendingPathComponent(resource)
+        if fileManager.isReadableFile(atPath: cliResource.path) {
+            return cliResource
+        }
+        throw AsarPatcherError.resourceMissing(resource)
+    }
+
+    private static func transform(_ source: String, in context: JSContext, archiveURL: String, displayName: String) throws -> String {
+        guard let function = context.objectForKeyedSubscript("__asarTransform"), let result = function.call(withArguments: [source, RuntimePackage.targetRuntimeId, displayName, archiveURL]) else {
+            throw AsarPatcherError.transformFailed("Bundled transform did not return a result.")
+        }
+        if let errorValue = result.forProperty("error"), !errorValue.isUndefined, !errorValue.isNull, let error = errorValue.toString(), !error.isEmpty {
+            throw AsarPatcherError.transformFailed(error)
+        }
+        guard let transformed = result.forProperty("source")?.toString() else {
+            throw AsarPatcherError.transformFailed("Bundled transform returned no JavaScript source.")
+        }
+        return transformed
     }
 }

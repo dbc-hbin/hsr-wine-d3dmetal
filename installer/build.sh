@@ -14,7 +14,9 @@ swiftc -O \
     -framework SwiftUI \
     -framework AppKit \
     -framework CryptoKit \
+    -framework JavaScriptCore \
     -o "$OUTPUT_BIN" \
+    RuntimePackage.swift \
     AsarPatcher.swift \
     InstallerEngine.swift \
     ContentView.swift \
@@ -26,6 +28,15 @@ mkdir -p "$APP_NAME/Contents/MacOS"
 mkdir -p "$APP_NAME/Contents/Resources"
 
 cp "$OUTPUT_BIN" "$APP_NAME/Contents/MacOS/$OUTPUT_BIN"
+
+for resource in typescript.js AsarTransform.js TypeScript-LICENSE.txt TypeScript-ThirdPartyNotice.txt; do
+    source="$DIR/resources/$resource"
+    if [ ! -f "$source" ]; then
+        echo "Missing bundled installer resource: $source" >&2
+        exit 1
+    fi
+    cp "$source" "$APP_NAME/Contents/Resources/$resource"
+done
 
 RUNTIME_ARCHIVE="Wine 11.17 ZZZ DX12 (GPTK4.0b2).tar.xz"
 LOCAL_RUNTIME_SOURCE="$HOME/Library/Application Support/Yaagl ZZZ OS/local-runtimes/$RUNTIME_ARCHIVE"
@@ -63,9 +74,9 @@ cat << 'PLIST' > "$APP_NAME/Contents/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>1.0.1</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>1.0.1</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>

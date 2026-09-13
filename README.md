@@ -4,28 +4,36 @@
 
 Optimized Wine 11.17 runtime source code and easy 1-click GUI installer for playing **Zenless Zone Zero (ZZZ)** with **Direct3D 12 (Apple GPTK 4.0b2)** on macOS (Apple Silicon) via **Yaagl ZZZ OS**.
 
-Registered in the Yaagl Wine dropdown menu as:
-**`Wine 11.17 ZZZ DX12 (GPTK4.0b2)`**
+The installer installs the included prebuilt Wine package and registers **`Wine 11.17 ZZZ DX12 (GPTK4.0b2)`** in Yaagl's Wine menu.
 
 ---
 
 ## ⚡ Quick Start (Easy 1-Click GUI Installer)
 
-You do not need to build from source. An easy native macOS GUI installer is included to set up everything automatically in seconds.
+You do not need to build from source. An easy native macOS GUI installer is included to set up everything automatically.
 
 ### Option 1: Native GUI Installer (Recommended)
-1. Go to [Releases](https://github.com/dbc-hbin/zzz-wine-d3dmetal-dx12/releases) and download `ZZZWineDX12Installer.zip`.
+1. Download [ZZZWineDX12Installer.zip](https://github.com/dbc-hbin/zzz-wine-d3dmetal-dx12/releases/latest/download/ZZZWineDX12Installer.zip).
 2. Extract the zip and open **`ZZZ Wine DX12 Installer.app`**.
 3. The app automatically detects your Yaagl ZZZ OS app and data folders.
-4. Click **`Install Wine 11.17 ZZZ DX12`**.
-   - Verifies runtime package integrity (SHA-256).
-   - Backs up `resources.neu` and registers `Wine 11.17 ZZZ DX12 (GPTK4.0b2)`.
-   - Extracts and configures the optimized Wine runtime.
-5. Launch Yaagl ZZZ OS and enjoy smooth DX12 gameplay!
+4. Quit Yaagl ZZZ OS, then click **`Install Wine 11.17 ZZZ DX12`**.
+   - Installs the included prebuilt Wine runtime archive for Yaagl.
+   - Registers **`Wine 11.17 ZZZ DX12 (GPTK4.0b2)`** in Yaagl's Wine menu.
+   - Backs up Yaagl's resources, Wine selection, and Wine directory so the prior configuration can be restored.
+5. Launch Yaagl ZZZ OS and select the installed Wine runtime from its Wine menu!
+
+The included archive remains in Yaagl's local runtime storage, so you can select this Wine runtime or switch back to another Wine runtime from Yaagl's Wine menu while offline. The installer does not require Node.js.
 
 ### Option 2: Terminal CLI
 ```bash
-./installer/zzz-wine-installer --cli
+./installer/zzz-wine-installer --install \
+  --app-path "/Applications/Yaagl ZZZ OS.app" \
+  --support-path "$HOME/Library/Application Support/Yaagl ZZZ OS"
+
+# Restore the previous Wine directory
+./installer/zzz-wine-installer --restore \
+  --app-path "/Applications/Yaagl ZZZ OS.app" \
+  --support-path "$HOME/Library/Application Support/Yaagl ZZZ OS"
 ```
 
 ---
@@ -79,9 +87,11 @@ zzz-wine-d3dmetal-dx12/
 └── installer/              # SwiftUI native installer source & build artifacts
     ├── ZZZ Wine DX12 Installer.app  # Pre-built native macOS app bundle
     ├── zzz-wine-installer           # CLI binary
-    ├── AsarPatcher.swift            # Pure Swift ASAR parser & patcher
-    ├── InstallerEngine.swift        # Auto-detect, download, extract & setup engine
-    └── ContentView.swift            # SwiftUI interface
+    ├── RuntimePackage.swift         # Prebuilt Wine package metadata
+    ├── AsarPatcher.swift            # Yaagl Wine menu registration patcher
+    ├── InstallerEngine.swift        # Auto-detect, install, register & restore engine
+    ├── ContentView.swift            # SwiftUI interface
+    └── resources/typescript.js      # Bundled JavaScript compiler for menu patching
 ```
 
 ---
