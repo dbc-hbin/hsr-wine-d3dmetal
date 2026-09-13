@@ -194,6 +194,9 @@ struct ContentView: View {
             .background(Color(NSColor.windowBackgroundColor))
         }
         .frame(minWidth: 620, minHeight: 640)
+        .onAppear {
+            engine.refreshStatus()
+        }
         .alert(isPresented: $showingAlert) {
             Alert(
                 title: Text(alertTitle),

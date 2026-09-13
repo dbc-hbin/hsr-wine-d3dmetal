@@ -24,7 +24,6 @@ public class InstallerEngine: ObservableObject {
     @Published public var logs: [String] = []
 
     public init() {
-        refreshStatus()
     }
 
     public func log(_ message: String) {
