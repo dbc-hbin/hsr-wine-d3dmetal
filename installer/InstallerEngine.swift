@@ -107,14 +107,15 @@ public class InstallerEngine: ObservableObject {
     public func findLocalArchive() -> String? {
         let fileManager = FileManager.default
         let candidates = [
+            ((Bundle.main.resourcePath ?? "") as NSString).appendingPathComponent(AsarPatcher.targetArchiveName),
+            ((Bundle.main.bundlePath as NSString).deletingLastPathComponent as NSString).appendingPathComponent(AsarPatcher.targetArchiveName),
+            (Bundle.main.bundlePath as NSString).appendingPathComponent(AsarPatcher.targetArchiveName),
             (supportPath as NSString).appendingPathComponent("local-runtimes/\(AsarPatcher.targetArchiveName)"),
             (FileManager.default.currentDirectoryPath as NSString).appendingPathComponent(AsarPatcher.targetArchiveName),
-            (Bundle.main.bundlePath as NSString).appendingPathComponent(AsarPatcher.targetArchiveName),
-            ((Bundle.main.resourcePath ?? "") as NSString).appendingPathComponent(AsarPatcher.targetArchiveName),
             (("~/Downloads" as NSString).expandingTildeInPath as NSString).appendingPathComponent(AsarPatcher.targetArchiveName)
         ]
         for path in candidates {
-            if fileManager.fileExists(atPath: path) {
+            if !path.isEmpty && fileManager.fileExists(atPath: path) {
                 return path
             }
         }

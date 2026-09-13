@@ -27,6 +27,18 @@ mkdir -p "$APP_NAME/Contents/Resources"
 
 cp "$OUTPUT_BIN" "$APP_NAME/Contents/MacOS/$OUTPUT_BIN"
 
+RUNTIME_ARCHIVE="wine-11.17-git.913e31f-zzz-dx12-tuned-d3dmetal-cache-warmup-cursor-rollback-gptk4b2.tar.xz"
+LOCAL_RUNTIME_SOURCE="$HOME/Library/Application Support/Yaagl ZZZ OS/local-runtimes/$RUNTIME_ARCHIVE"
+if [ -f "$LOCAL_RUNTIME_SOURCE" ]; then
+    echo "==> Bundling runtime archive into App Resources (standalone installer)..."
+    cp "$LOCAL_RUNTIME_SOURCE" "$APP_NAME/Contents/Resources/$RUNTIME_ARCHIVE"
+fi
+
+if [ -d "$DIR/../external/D3DMetal.framework" ]; then
+    echo "==> Bundling D3DMetal.framework into App Resources..."
+    ditto "$DIR/../external/D3DMetal.framework" "$APP_NAME/Contents/Resources/D3DMetal.framework"
+fi
+
 cat << 'PLIST' > "$APP_NAME/Contents/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
