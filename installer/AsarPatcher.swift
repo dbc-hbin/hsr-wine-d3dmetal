@@ -154,6 +154,7 @@ public struct AsarPatcher {
         distFiles["assets"] = assets
         dist["files"] = distFiles
         files["dist"] = dist
+        headerObj["files"] = files
 
         func adjustOffsets(in dict: inout [String: Any]) {
             guard var f = dict["files"] as? [String: Any] else { return }
@@ -191,6 +192,12 @@ public struct AsarPatcher {
         outputData.append(newHeaderJsonData)
         if padLen > 0 {
             outputData.append(Data(repeating: 0, count: padLen))
+        }
+
+        // Preserve any payload preceding index.js if jsOffset > 0
+        if jsOffset > 0 {
+            let prefixPayload = sourceData.subdata(in: payloadStart..<(payloadStart + jsOffset))
+            outputData.append(prefixPayload)
         }
 
         outputData.append(newJsData)

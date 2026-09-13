@@ -48,7 +48,7 @@ public class InstallerEngine: ObservableObject {
         newStatus.yaaglAppExists = fileManager.fileExists(atPath: appPath)
         newStatus.yaaglSupportExists = fileManager.fileExists(atPath: supportPath)
 
-        let runningProcesses = findProcesses(named: "Yaagl ZZZ OS") + findProcesses(named: "wineserver")
+        let runningProcesses = findYaaglProcesses()
         newStatus.yaaglIsRunning = !runningProcesses.isEmpty
 
         let tagPath = (supportPath as NSString).appendingPathComponent(".storage/wine_tag.neustorage")
@@ -71,10 +71,10 @@ public class InstallerEngine: ObservableObject {
         }
     }
 
-    public func findProcesses(named name: String) -> [Int32] {
+    public func findProcesses(matching pattern: String) -> [Int32] {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        task.arguments = ["-f", name]
+        task.arguments = ["-f", pattern]
         let pipe = Pipe()
         task.standardOutput = pipe
         do {
@@ -88,9 +88,15 @@ public class InstallerEngine: ObservableObject {
         return []
     }
 
+    public func findYaaglProcesses() -> [Int32] {
+        let yaaglPids = findProcesses(matching: "Yaagl ZZZ OS")
+        let specificWinePids = findProcesses(matching: "\(supportPath)/wine")
+        return Array(Set(yaaglPids + specificWinePids))
+    }
+
     public func terminateYaaglProcesses() {
-        log("Terminating running Yaagl and Wine processes...")
-        let pids = findProcesses(named: "Yaagl ZZZ OS") + findProcesses(named: "wineserver")
+        log("Terminating running Yaagl and associated Wine processes...")
+        let pids = findYaaglProcesses()
         for pid in pids {
             kill(pid, SIGTERM)
         }
@@ -188,8 +194,8 @@ public class InstallerEngine: ObservableObject {
                     throw NSError(domain: "Install", code: 11, userInfo: [NSLocalizedDescriptionKey: "Yaagl ZZZ OS Support folder not found: \(self.supportPath)"])
                 }
 
-                if !self.findProcesses(named: "Yaagl ZZZ OS").isEmpty || !self.findProcesses(named: "wineserver").isEmpty {
-                    self.log("Yaagl or Wine processes are active. Terminating safely for installation...")
+                if !self.findYaaglProcesses().isEmpty {
+                    self.log("Yaagl or associated Wine processes are active. Terminating safely for installation...")
                     self.terminateYaaglProcesses()
                     Thread.sleep(forTimeInterval: 1.0)
                 }
@@ -305,6 +311,16 @@ public class InstallerEngine: ObservableObject {
                 try FileManager.default.createDirectory(atPath: storageDir, withIntermediateDirectories: true)
                 let tagPath = (storageDir as NSString).appendingPathComponent("wine_tag.neustorage")
                 let statePath = (storageDir as NSString).appendingPathComponent("wine_state.neustorage")
+
+                let tagBackup = tagPath + ".bak"
+                let stateBackup = statePath + ".bak"
+                if !FileManager.default.fileExists(atPath: tagBackup) && FileManager.default.fileExists(atPath: tagPath) {
+                    try? FileManager.default.copyItem(atPath: tagPath, toPath: tagBackup)
+                }
+                if !FileManager.default.fileExists(atPath: stateBackup) && FileManager.default.fileExists(atPath: statePath) {
+                    try? FileManager.default.copyItem(atPath: statePath, toPath: stateBackup)
+                }
+
                 try AsarPatcher.targetRuntimeId.write(toFile: tagPath, atomically: true, encoding: .utf8)
                 try "ready".write(toFile: statePath, atomically: true, encoding: .utf8)
                 self.log("Active Wine tag set in Yaagl: \(AsarPatcher.targetRuntimeId)")
@@ -359,6 +375,22 @@ public class InstallerEngine: ObservableObject {
                     try? FileManager.default.removeItem(atPath: wineDir)
                     try FileManager.default.moveItem(atPath: wineBackupDir, toPath: wineDir)
                     self.log("Previous Wine directory restored.")
+                }
+
+                let storageDir = (self.supportPath as NSString).appendingPathComponent(".storage")
+                let tagPath = (storageDir as NSString).appendingPathComponent("wine_tag.neustorage")
+                let statePath = (storageDir as NSString).appendingPathComponent("wine_state.neustorage")
+                let tagBackup = tagPath + ".bak"
+                let stateBackup = statePath + ".bak"
+                if FileManager.default.fileExists(atPath: tagBackup) {
+                    try? FileManager.default.removeItem(atPath: tagPath)
+                    try? FileManager.default.copyItem(atPath: tagBackup, toPath: tagPath)
+                    self.log("Previous Wine tag restored.")
+                }
+                if FileManager.default.fileExists(atPath: stateBackup) {
+                    try? FileManager.default.removeItem(atPath: statePath)
+                    try? FileManager.default.copyItem(atPath: stateBackup, toPath: statePath)
+                    self.log("Previous Wine state restored.")
                 }
 
                 DispatchQueue.main.async {
