@@ -65,6 +65,8 @@ Yaagl 앱의 Wine 메뉴에 **`Wine 11.17 ZZZ DX12 (GPTK4.0b2)`**라는 이름�
 
 ```
 zzz-wine-d3dmetal-dx12/
+├── external/               # Apple GPTK 4.0b2 순정 D3DMetal.framework 원본
+│   └── D3DMetal.framework  # D3DMetal 바이너리 및 libmetalirconverter.dylib
 ├── dlls/                   # Wine 11.17 수정/패치된 DLL 소스 코드
 ├── server/                 # ARM64 네이티브 지원 및 msync가 적용된 wineserver 소스
 ├── include/                # msync.h 등 추가/수정된 헤더 파일

@@ -66,6 +66,8 @@ This build integrates several targeted patches into upstream Wine 11.17 to ensur
 
 ```
 zzz-wine-d3dmetal-dx12/
+├── external/               # Original Apple GPTK 4.0b2 D3DMetal.framework
+│   └── D3DMetal.framework  # D3DMetal binary and libmetalirconverter.dylib
 ├── dlls/                   # Wine 11.17 modified DLL sources
 ├── server/                 # ARM64 native wineserver & msync implementation
 ├── include/                # Additional headers (msync.h, server_protocol.h)
