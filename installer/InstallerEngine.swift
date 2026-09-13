@@ -13,7 +13,10 @@ public struct InstallStatus {
 public class InstallerEngine: ObservableObject {
     public static let defaultAppPath = "/Applications/Yaagl ZZZ OS.app"
     public static let defaultSupportPath = ("~/Library/Application Support/Yaagl ZZZ OS" as NSString).expandingTildeInPath
-    public static let releaseDownloadUrl = "https://github.com/dbc-hbin/zzz-wine-d3dmetal-dx12/releases/download/v1.0.0/\(AsarPatcher.targetArchiveName)"
+    public static var releaseDownloadUrl: String {
+        let encoded = AsarPatcher.targetArchiveName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? AsarPatcher.targetArchiveName
+        return "https://github.com/dbc-hbin/zzz-wine-d3dmetal-dx12/releases/download/v1.0.0/\(encoded)"
+    }
 
     @Published public var appPath: String = defaultAppPath
     @Published public var supportPath: String = defaultSupportPath
@@ -106,14 +109,16 @@ public class InstallerEngine: ObservableObject {
 
     public func findLocalArchive() -> String? {
         let fileManager = FileManager.default
-        let candidates = [
-            ((Bundle.main.resourcePath ?? "") as NSString).appendingPathComponent(AsarPatcher.targetArchiveName),
-            ((Bundle.main.bundlePath as NSString).deletingLastPathComponent as NSString).appendingPathComponent(AsarPatcher.targetArchiveName),
-            (Bundle.main.bundlePath as NSString).appendingPathComponent(AsarPatcher.targetArchiveName),
-            (supportPath as NSString).appendingPathComponent("local-runtimes/\(AsarPatcher.targetArchiveName)"),
-            (FileManager.default.currentDirectoryPath as NSString).appendingPathComponent(AsarPatcher.targetArchiveName),
-            (("~/Downloads" as NSString).expandingTildeInPath as NSString).appendingPathComponent(AsarPatcher.targetArchiveName)
-        ]
+        let names = [AsarPatcher.targetArchiveName, AsarPatcher.legacyArchiveName]
+        var candidates: [String] = []
+        for name in names {
+            candidates.append(((Bundle.main.resourcePath ?? "") as NSString).appendingPathComponent(name))
+            candidates.append(((Bundle.main.bundlePath as NSString).deletingLastPathComponent as NSString).appendingPathComponent(name))
+            candidates.append((Bundle.main.bundlePath as NSString).appendingPathComponent(name))
+            candidates.append((supportPath as NSString).appendingPathComponent("local-runtimes/\(name)"))
+            candidates.append((FileManager.default.currentDirectoryPath as NSString).appendingPathComponent(name))
+            candidates.append((("~/Downloads" as NSString).expandingTildeInPath as NSString).appendingPathComponent(name))
+        }
         for path in candidates {
             if !path.isEmpty && fileManager.fileExists(atPath: path) {
                 return path

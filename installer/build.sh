@@ -27,11 +27,17 @@ mkdir -p "$APP_NAME/Contents/Resources"
 
 cp "$OUTPUT_BIN" "$APP_NAME/Contents/MacOS/$OUTPUT_BIN"
 
-RUNTIME_ARCHIVE="wine-11.17-git.913e31f-zzz-dx12-tuned-d3dmetal-cache-warmup-cursor-rollback-gptk4b2.tar.xz"
+RUNTIME_ARCHIVE="Wine 11.17 ZZZ DX12 (GPTK4.0b2).tar.xz"
 LOCAL_RUNTIME_SOURCE="$HOME/Library/Application Support/Yaagl ZZZ OS/local-runtimes/$RUNTIME_ARCHIVE"
 if [ -f "$LOCAL_RUNTIME_SOURCE" ]; then
     echo "==> Bundling runtime archive into App Resources (standalone installer)..."
     cp "$LOCAL_RUNTIME_SOURCE" "$APP_NAME/Contents/Resources/$RUNTIME_ARCHIVE"
+else
+    LEGACY_SOURCE="$HOME/Library/Application Support/Yaagl ZZZ OS/local-runtimes/wine-11.17-git.913e31f-zzz-dx12-tuned-d3dmetal-cache-warmup-cursor-rollback-gptk4b2.tar.xz"
+    if [ -f "$LEGACY_SOURCE" ]; then
+        echo "==> Bundling legacy runtime archive as $RUNTIME_ARCHIVE into App Resources..."
+        cp "$LEGACY_SOURCE" "$APP_NAME/Contents/Resources/$RUNTIME_ARCHIVE"
+    fi
 fi
 
 if [ -d "$DIR/../external/D3DMetal.framework" ]; then

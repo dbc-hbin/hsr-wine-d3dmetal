@@ -24,7 +24,8 @@ public enum AsarPatcherError: LocalizedError {
 public struct AsarPatcher {
     public static let targetRuntimeId = "11.17-zzz-dx12-tuned-stage-parallel-cache-warmup-cursor-rollback-gptk4b2-arm64server"
     public static let targetDisplayName = "Wine 11.17 ZZZ DX12 (GPTK4.0b2)"
-    public static let targetArchiveName = "wine-11.17-git.913e31f-zzz-dx12-tuned-d3dmetal-cache-warmup-cursor-rollback-gptk4b2.tar.xz"
+    public static let targetArchiveName = "Wine 11.17 ZZZ DX12 (GPTK4.0b2).tar.xz"
+    public static let legacyArchiveName = "wine-11.17-git.913e31f-zzz-dx12-tuned-d3dmetal-cache-warmup-cursor-rollback-gptk4b2.tar.xz"
     public static let targetArchiveSha256 = "bdc0819cc8e196b139b2352029f7b5d6423a07fdc4d148b238f721f968d1502d"
     public static let targetArchiveSize = 241864652
     public static let targetRuntimeManifestSha256 = "f16ff088947017c05c69bda1e332659119f92d244ffbab5d2bbaedb46689c568"
@@ -76,7 +77,8 @@ public struct AsarPatcher {
             throw AsarPatcherError.stringDecodingFailed
         }
 
-        let localUrl = "file://\(userHome)/Library/Application%20Support/Yaagl%20ZZZ%20OS/local-runtimes/\(targetArchiveName)"
+        let encodedArchive = targetArchiveName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? targetArchiveName
+        let localUrl = "file://\(userHome)/Library/Application%20Support/Yaagl%20ZZZ%20OS/local-runtimes/\(encodedArchive)"
 
         let newEntry: [String: Any] = [
             "id": targetRuntimeId,

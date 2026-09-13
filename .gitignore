@@ -7,3 +7,4 @@ build/
 *.tar.xz
 *.tar.gz
 *.dSYM
+*.zip
