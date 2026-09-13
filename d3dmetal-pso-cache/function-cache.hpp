@@ -1,0 +1,64 @@
+#pragma once
+
+#import <Foundation/Foundation.h>
+
+#include <cstdint>
+#include <memory>
+#include <span>
+
+namespace yaagl::pso {
+
+// functions is adopted at +1. A reusable result may be snapshotted by the
+// cache; the original caller still receives its original mutable container.
+class FunctionResult final {
+public:
+    FunctionResult() noexcept = default;
+    FunctionResult(NSMutableArray* functions, bool reusable) noexcept;
+    FunctionResult(const FunctionResult&) = delete;
+    FunctionResult& operator=(const FunctionResult&) = delete;
+    FunctionResult(FunctionResult&& other) noexcept;
+    FunctionResult& operator=(FunctionResult&& other) noexcept;
+    ~FunctionResult();
+
+    [[nodiscard]] NSMutableArray* functions() const noexcept { return functions_; }
+    [[nodiscard]] bool reusable() const noexcept { return reusable_; }
+    [[nodiscard]] NSMutableArray* takeFunctions() noexcept;
+
+private:
+    NSMutableArray* functions_ = nil;
+    bool reusable_ = false;
+};
+
+using FunctionCreate = FunctionResult (*)(void* context);
+
+class FunctionCache final {
+public:
+    FunctionCache();
+    FunctionCache(const FunctionCache&) = delete;
+    FunctionCache& operator=(const FunctionCache&) = delete;
+    ~FunctionCache();
+
+    // library is retained with a newly admitted entry so key storage owned by
+    // that library cannot be reclaimed and reused while the entry is live.
+    [[nodiscard]] FunctionResult getOrCreate(
+        const void* device,
+        std::span<const std::uint8_t> key,
+        id library,
+        FunctionCreate create,
+        void* context);
+
+    void forgetDevice(const void* device);
+
+    // Cache admission for device is blocked until detached entries have been
+    // released and action returns. The same address starts fresh afterward.
+    void withDeviceRetired(
+        const void* device,
+        void (*action)(const void*, const void*),
+        const void* context);
+
+private:
+    class Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+} // namespace yaagl::pso

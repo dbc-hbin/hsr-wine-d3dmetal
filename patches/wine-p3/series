@@ -1,0 +1,6 @@
+# Ordered quilt for Wine P3 (upstream 11.17 @ 913e31f2).
+# Canonical names: build/wine-p3/contracts.json
+# Apply with scripts/build-wine-p3.sh prepare (never guess from failed patches).
+0001-host-msync.patch
+0002-d3dmetal-bridge.patch
+0003-zzz-compatibility.patch

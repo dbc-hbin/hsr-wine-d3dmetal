@@ -1,0 +1,9 @@
+.DS_Store
+*.swp
+*.bak
+*.tmp
+build/
+.cache/
+*.tar.xz
+*.tar.gz
+*.dSYM

@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "id": "wine-p3",
+  "wineVersion": "11.17",
+  "sourcePin": "913e31f201d344223bdf3d13a50a41af35893d12",
+  "sourceUrl": "https://github.com/wine-mirror/wine.git",
+  "sourceTagHint": "wine-11.17",
+  "notes": [
+    "Ordered source quilt against the immutable sourcePin; all source changes are carried by these patches.",
+    "scripts/build-wine-p3.sh recomputes patch sha256 into build/wine-p3/provenance.json at install time.",
+    "prepared.marker is gated: nonempty series files + hash equality; mark-prepared requires git apply --reverse --check.",
+    "Do not strip PKG_CONFIG_LIBDIR from upstream configure; regenerate top-level configure only via Main if needed.",
+    "server/window.c CW0009 is HostSync (not GraphicsBridge)."
+  ],
+  "series": [
+    {
+      "file": "0001-host-msync.patch",
+      "owner": "HostSync",
+      "surfaces": [
+        "dlls/ntdll",
+        "dlls/wow64cpu",
+        "server (msync)",
+        "server/window.c get_top_clipping_window (CW0009)",
+        "include (msync headers)"
+      ],
+      "status": "present",
+      "sha256": "794e8f0e2527e774d94da3a7fca70866249869f5eb199cc511e8fe2e6d0ea620"
+    },
+    {
+      "file": "0002-d3dmetal-bridge.patch",
+      "owner": "GraphicsBridge",
+      "surfaces": [
+        "dlls/winemac.drv",
+        "dlls/win32u (CX_ACTIVE_GRAPHICS_BACKEND / d3dkmt / vulkan / shm 23950)",
+        "include/ntuser.h",
+        "include/wine/gdi_driver.h",
+        "macdrv_functions_t ABI 192",
+        "d3dmetal_macdrv_win_data ABI 120"
+      ],
+      "status": "present",
+      "sha256": "2c52c4989422b8d133b28a5fa7d18f9a536e58d5467d600a1c7995731114f93a"
+    },
+    {
+      "file": "0003-zzz-compatibility.patch",
+      "owner": "GameCompatibility",
+      "surfaces": [
+        "dlls/ws2_32/socket.c (WINE_ENABLE_TIMEOUT_FIX)",
+        "dlls/mfreadwrite/reader.c (CW #20833)"
+      ],
+      "status": "present",
+      "sha256": "89978e1df310f5adde8c8a6d9e2d107ca86747c3c681e5d249645b3bbdf23033"
+    }
+  ],
+  "exclude": [
+    "0017-winemetal-new-stub.diff",
+    "CX product D3DMetal 3.0",
+    "CN/crypt32 hacks unless SKU requested",
+    "Apple GPTK download in BuildDriver"
+  ],
+  "generatorHooks": [
+    "tools/make_requests (when server/protocol or request defs change)",
+    "tools/make_makefiles only if Makefile.in inventory changes; do not rewrite shipped configure here"
+  ]
+}
