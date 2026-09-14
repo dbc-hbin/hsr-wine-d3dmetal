@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Darwin
 
@@ -11,12 +12,12 @@ public struct InstallStatus {
 }
 
 public class InstallerEngine: ObservableObject {
-    public static let defaultAppPath = "/Applications/Yaagl ZZZ OS.app"
-    public static let defaultSupportPath = ("~/Library/Application Support/Yaagl ZZZ OS" as NSString).expandingTildeInPath
+    public static let defaultAppPath = "/Applications/Yaagl HSR OS.app"
+    public static let defaultSupportPath = ("~/Library/Application Support/Yaagl HSR OS" as NSString).expandingTildeInPath
     public static var releaseDownloadUrl: String {
         let archiveName = RuntimePackage.releaseArchiveName
         let encoded = archiveName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? archiveName
-        return "https://github.com/dbc-hbin/zzz-wine-d3dmetal-dx12/releases/download/v1.0.2/\(encoded)"
+        return "https://github.com/dbc-hbin/hsr-wine-d3dmetal/releases/download/v\(RuntimePackage.releaseVersion)/\(encoded)"
     }
 
     @Published public var appPath: String = defaultAppPath
@@ -335,17 +336,25 @@ public class InstallerEngine: ObservableObject {
 
     private func requireYaaglInstallation() throws {
         let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: appPath) else {
-            throw NSError(domain: "Install", code: 10, userInfo: [NSLocalizedDescriptionKey: "Yaagl ZZZ OS.app was not found at \(appPath)."])
+        let standardizedApp = URL(fileURLWithPath: appPath).standardizedFileURL
+        let standardizedSupport = URL(fileURLWithPath: supportPath).standardizedFileURL
+        guard standardizedApp.lastPathComponent == "Yaagl HSR OS.app" else {
+            throw NSError(domain: "Install", code: 9, userInfo: [NSLocalizedDescriptionKey: "Select Yaagl HSR OS.app. Other Yaagl games are not supported by this installer."])
+        }
+        guard standardizedSupport.lastPathComponent == "Yaagl HSR OS" else {
+            throw NSError(domain: "Install", code: 13, userInfo: [NSLocalizedDescriptionKey: "Select the Yaagl HSR OS support folder. Other Yaagl games are not supported by this installer."])
+        }
+        guard fileManager.fileExists(atPath: standardizedApp.path) else {
+            throw NSError(domain: "Install", code: 10, userInfo: [NSLocalizedDescriptionKey: "Yaagl HSR OS.app was not found at \(appPath)."])
         }
         guard fileManager.fileExists(atPath: supportPath) else {
-            throw NSError(domain: "Install", code: 11, userInfo: [NSLocalizedDescriptionKey: "Yaagl ZZZ OS support folder was not found at \(supportPath)."])
+            throw NSError(domain: "Install", code: 11, userInfo: [NSLocalizedDescriptionKey: "Yaagl HSR OS support folder was not found at \(supportPath)."])
         }
     }
 
     private func requireNoRunningYaaglProcesses() throws {
         guard findYaaglProcesses().isEmpty else {
-            throw NSError(domain: "Install", code: 12, userInfo: [NSLocalizedDescriptionKey: "Quit Yaagl ZZZ OS and its Wine processes before changing the runtime."])
+            throw NSError(domain: "Install", code: 12, userInfo: [NSLocalizedDescriptionKey: "Quit Yaagl HSR OS and its Wine processes before changing the runtime."])
         }
     }
 
@@ -370,16 +379,19 @@ public class InstallerEngine: ObservableObject {
                 try? fileManager.removeItem(atPath: temporaryDestination)
                 throw error
             }
+            try validateArchive(at: destination)
             return destination
         }
 
         if fileManager.fileExists(atPath: destination) {
             log("Using the existing local runtime archive: \(destination)")
+            try validateArchive(at: destination)
             return destination
         }
         if let source = findLocalArchive() {
             log("Copying prebuilt runtime archive to Yaagl: \(source)")
             try fileManager.copyItem(atPath: source, toPath: destination)
+            try validateArchive(at: destination)
             return destination
         }
 
@@ -395,7 +407,16 @@ public class InstallerEngine: ObservableObject {
         if let downloadError {
             throw downloadError
         }
+        try validateArchive(at: destination)
         return destination
+    }
+
+    private func validateArchive(at archivePath: String) throws {
+        let data = try Data(contentsOf: URL(fileURLWithPath: archivePath), options: .mappedIfSafe)
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard digest == RuntimePackage.archiveSHA256 else {
+            throw NSError(domain: "Install", code: 22, userInfo: [NSLocalizedDescriptionKey: "The runtime archive failed SHA-256 validation. Expected \(RuntimePackage.archiveSHA256), got \(digest)."])
+        }
     }
 
     private func extractRuntime(at archivePath: String) throws -> String {
@@ -427,7 +448,7 @@ public class InstallerEngine: ObservableObject {
     }
 
     private var registrationHelperDirectory: String {
-        (supportPath as NSString).appendingPathComponent(".zzz-wine-registration")
+        (supportPath as NSString).appendingPathComponent(".hsr-wine-registration")
     }
 
     private var registrationBackupsDirectory: String {
@@ -438,9 +459,9 @@ public class InstallerEngine: ObservableObject {
         let fileManager = FileManager.default
         let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
         let candidates: [String?] = [
-            Bundle.main.resourceURL?.appendingPathComponent("zzz-wine-register").path,
-            executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/zzz-wine-register").path,
-            executable.deletingLastPathComponent().appendingPathComponent("zzz-wine-register").path
+            Bundle.main.resourceURL?.appendingPathComponent("hsr-wine-register").path,
+            executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/hsr-wine-register").path,
+            executable.deletingLastPathComponent().appendingPathComponent("hsr-wine-register").path
         ]
         for candidate in candidates.compactMap({ $0 }) {
             if fileManager.fileExists(atPath: candidate) {
@@ -469,7 +490,7 @@ public class InstallerEngine: ObservableObject {
     private func installRegistrationHelper() throws {
         let fileManager = FileManager.default
         guard let binSource = findHelperBinarySource() else {
-            throw NSError(domain: "Install", code: 60, userInfo: [NSLocalizedDescriptionKey: "Registration helper executable (zzz-wine-register) was not found."])
+            throw NSError(domain: "Install", code: 60, userInfo: [NSLocalizedDescriptionKey: "Registration helper executable (hsr-wine-register) was not found."])
         }
         guard let tsSource = findHelperResourceSource("typescript.js") else {
             throw NSError(domain: "Install", code: 61, userInfo: [NSLocalizedDescriptionKey: "Registration helper dependency typescript.js was not found."])
@@ -485,7 +506,7 @@ public class InstallerEngine: ObservableObject {
         defer { try? fileManager.removeItem(atPath: staging) }
 
         // Stage executable
-        let stagedBin = (staging as NSString).appendingPathComponent("zzz-wine-register")
+        let stagedBin = (staging as NSString).appendingPathComponent("hsr-wine-register")
         try fileManager.copyItem(atPath: binSource, toPath: stagedBin)
         try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stagedBin)
 

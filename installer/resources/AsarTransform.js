@@ -252,69 +252,112 @@
     var matches = functionNodes(sourceFile).filter(function (candidate) {
       if (!candidate.body) return false;
       var bodyText = text(candidate.body, sourceFile);
-      return bodyText.includes("resolutionCustom") && bodyText.includes(".setProps(") && bodyText.includes("GAME_RUNNING");
+      return bodyText.includes("WINEDLLOVERRIDES") && bodyText.includes("GAME_RUNNING") && bodyText.includes("renderBackend");
     });
-    if (matches.length !== 1) throw new Error("could not unambiguously locate the game launch function");
+    if (matches.length !== 1) throw new Error("could not unambiguously locate the HSR game launch function");
     var functionNode = matches[0];
-
     var wineCalls = [];
     visit(functionNode.body, function (node) {
       if (ts.isCallExpression(node) && propertyAccessName(node.expression) === "setProps" && ts.isIdentifier(node.expression.expression)) wineCalls.push(node.expression.expression.text);
     });
-    if (wineCalls.length !== 1) throw new Error("could not unambiguously locate the game Wine instance");
-
-    var variables = [];
-    visit(functionNode.body, function (node) {
-      if (!ts.isVariableStatement(node) || node.declarationList.declarations.length !== 1) return;
-      var declaration = node.declarationList.declarations[0];
-      if (ts.isIdentifier(declaration.name) && declaration.initializer && ts.isArrayLiteralExpression(declaration.initializer) && declaration.initializer.elements.length === 0) variables.push({ statement: node, name: declaration.name.text });
-    });
-    if (variables.length !== 1) throw new Error("could not unambiguously locate game launch arguments");
-
+    if (wineCalls.length !== 1) throw new Error("could not unambiguously locate the HSR Wine instance");
     var wine = wineCalls[0];
-    var argumentsName = variables[0].name;
-    var d3d12Statements = [];
+    var overrides = [];
     visit(functionNode.body, function (node) {
-      if (!ts.isExpressionStatement(node)) return;
-      var expression = node.expression;
-      while (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) expression = expression.right;
-      if (ts.isCallExpression(expression) && expression.arguments.length === 1 && stringLiteralValue(expression.arguments[0]) === "-use-d3d12" && propertyAccessName(expression.expression) === "push" && isIdentifierNamed(expression.expression.expression, argumentsName)) d3d12Statements.push(node);
+      if (ts.isPropertyAssignment(node) && staticPropertyName(node.name) === "WINEDLLOVERRIDES") overrides.push(node);
     });
-
+    if (overrides.length !== 1) throw new Error("could not unambiguously locate HSR DLL overrides");
     var target = JSON.stringify(targetId);
-    var d3d12Statement = wine + ".attributes.id===" + target + "&&" + wine + ".attributes.renderBackend===\"d3dmetal\"&&" + argumentsName + ".push(\"-use-d3d12\");";
-    var changes = d3d12Statements.length ? [{
-      start: d3d12Statements[0].getStart(sourceFile),
-      end: d3d12Statements[0].end,
-      replacement: d3d12Statement
-    }] : [{
-      start: variables[0].statement.end,
-      end: variables[0].statement.end,
-      replacement: d3d12Statement
-    }];
-    d3d12Statements.slice(1).forEach(function (statement) {
-      changes.push({ start: statement.getStart(sourceFile), end: statement.end, replacement: "" });
-    });
-
-    var steamBranches = [];
+    var initializer = text(overrides[0].initializer, sourceFile);
+    if (initializer.includes(wine + ".attributes.id===" + target)) return [];
+    var replacement = "WINEDLLOVERRIDES:" + wine + ".attributes.id===" + target + "?\"d3d11,dxgi=b\":" + initializer;
+    var changes = [{ start: overrides[0].getStart(sourceFile), end: overrides[0].end, replacement: replacement }];
+    var acquisitionCalls = [];
     visit(functionNode.body, function (node) {
-      if (!ts.isConditionalExpression(node) || !ts.isPropertyAccessExpression(node.condition) || node.condition.name.text !== "steamPatch" || !ts.isArrayLiteralExpression(node.whenTrue)) return;
-      var first = node.whenTrue.elements[0];
-      if (!first || !ts.isCallExpression(first) || propertyAccessName(first.expression) !== "toWinePath" || !isIdentifierNamed(first.expression.expression, wine)) return;
-      steamBranches.push(node.whenTrue);
+      if (!ts.isAwaitExpression(node) || !ts.isCallExpression(node.expression)) return;
+      var call = node.expression;
+      if (!ts.isIdentifier(call.expression) || call.arguments.length < 2) return;
+      if (isIdentifierNamed(call.arguments[0], wine) && node.getStart(sourceFile) < overrides[0].getStart(sourceFile)) acquisitionCalls.push(node);
     });
-    if (steamBranches.length !== 1) throw new Error("could not unambiguously locate the Steam game launch arguments");
-    var steamArguments = steamBranches[0];
-    var forwardsGameArguments = steamArguments.elements.some(function (element) {
-      return ts.isSpreadElement(element) && isIdentifierNamed(element.expression, argumentsName);
+    if (acquisitionCalls.length !== 1) throw new Error("could not unambiguously locate HSR backend acquisition");
+    changes.push({
+      start: acquisitionCalls[0].getStart(sourceFile),
+      end: acquisitionCalls[0].end,
+      replacement: wine + ".attributes.id!==" + target + "&&" + text(acquisitionCalls[0], sourceFile)
     });
-    if (!forwardsGameArguments) {
-      changes.push({
-        start: steamArguments.end - 1,
-        end: steamArguments.end - 1,
-        replacement: ",..." + argumentsName
+    return changes;
+  }
+
+  function dxmtPatchChanges(sourceFile, targetId) {
+    var changes = [];
+    var candidates = functionNodes(sourceFile).filter(function (candidate) {
+      if (!candidate.body) return false;
+      var bodyText = text(candidate.body, sourceFile);
+      return bodyText.includes(".bak") && bodyText.includes("patched");
+    });
+    var matchedFunctions = 0;
+    candidates.forEach(function (functionNode) {
+      var wineNames = [];
+      visit(functionNode.body, function (node) {
+        if (ts.isPropertyAccessExpression(node) && node.name.text === "prefix" && ts.isIdentifier(node.expression)) wineNames.push(node.expression.text);
       });
-    }
+      wineNames = wineNames.filter(function (name, index) { return wineNames.indexOf(name) === index; });
+      if (wineNames.length !== 1) return;
+      var wine = wineNames[0];
+      var directoryNames = [];
+      visit(functionNode.body, function (node) {
+        if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name) || !node.initializer) return;
+        var initializer = text(node.initializer, sourceFile);
+        if (initializer.includes("system32") || initializer.includes("syswow64")) directoryNames.push(node.name.text);
+      });
+      var loops = [];
+      visit(functionNode.body, function (node) {
+        if (!ts.isForOfStatement(node)) return;
+        if (ts.isIdentifier(node.expression) && text(node.statement, sourceFile).includes(".bak")) loops.push(node);
+      });
+      var dxmtAwaits = [];
+      visit(functionNode.body, function (node) {
+        if (!ts.isAwaitExpression(node) || !ts.isCallExpression(node.expression)) return;
+        var call = node.expression;
+        if (!call.arguments.some(function (argument) {
+          return ts.isStringLiteralLike(argument) && argument.text.startsWith("./dxmt/");
+        })) return;
+        var ancestor = node.parent;
+        while (ancestor && ancestor !== functionNode.body) {
+          if (ts.isForOfStatement(ancestor)) return;
+          ancestor = ancestor.parent;
+        }
+        dxmtAwaits.push(node);
+      });
+      if (!loops.length && !dxmtAwaits.length) return;
+      matchedFunctions += 1;
+      dxmtAwaits.forEach(function (awaitNode) {
+        var ancestor = awaitNode.parent;
+        while (ancestor && ancestor !== functionNode.body) {
+          if (ts.isBinaryExpression(ancestor) && text(ancestor, sourceFile).includes(targetId)) return;
+          ancestor = ancestor.parent;
+        }
+        changes.push({
+          start: awaitNode.getStart(sourceFile),
+          end: awaitNode.end,
+          replacement: wine + ".attributes.id!==" + JSON.stringify(targetId) + "&&" + text(awaitNode, sourceFile)
+        });
+      });
+      loops.forEach(function (loop) {
+        var ancestor = loop.parent;
+        var alreadyTagged = false;
+        while (ancestor && ancestor !== functionNode.body) {
+          if (ts.isIfStatement(ancestor) && text(ancestor.expression, sourceFile).includes(targetId)) alreadyTagged = true;
+          ancestor = ancestor.parent;
+        }
+        if (!alreadyTagged) changes.push({
+          start: loop.getStart(sourceFile),
+          end: loop.end,
+          replacement: "if(" + wine + ".attributes.id!==" + JSON.stringify(targetId) + "){" + text(loop, sourceFile) + "}"
+        });
+      });
+    });
+    if (!matchedFunctions) throw new Error("could not locate the HSR DXMT patch lifecycle");
     return changes;
   }
 
@@ -481,6 +524,7 @@
       }
       changes = changes.concat(localInstallerChanges(sourceFile, targetId));
       changes = changes.concat(launchChanges(sourceFile, targetId));
+      changes = changes.concat(dxmtPatchChanges(sourceFile, targetId));
       changes = changes.concat(updaterChanges(sourceFile, options));
       var output = applyChanges(source, changes);
       var outputFile = parse(output);

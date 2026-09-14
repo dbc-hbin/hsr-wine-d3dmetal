@@ -1,5 +1,5 @@
 #!/bin/sh
-# Incremental Wine 11.17 ZZZ DX12 overlay builds.
+# Incremental Wine 11.17 HSR host builds.
 # Reuses the verified P3 payload, rebuilding only the closed artifact inventory
 # below with the x86_64 WoW64 and arm64-server configure trees.
 set -eu
@@ -10,16 +10,16 @@ case "$WINE_BUILD_PROFILE" in
   tuned)
     BUILD_LABEL=build-wine-tuned
     ROOT="$REPO_DIR/build/wine-tuned"
-    PROVENANCE_NAME=wine-11.17-git.913e31f-zzz-dx12-tuned-gptk4b2
-    RUNTIME_ID=11.17-zzz-dx12-tuned
-    PACKAGE_COMMAND=scripts/package-wine-p3-runtime.sh
+    PROVENANCE_NAME=wine-11.17-git.913e31f-hsr
+    RUNTIME_ID=11.17-hsr-gptk4b2-stock
+    PACKAGE_COMMAND=scripts/package-hsr-stock-runtime.sh
     ;;
   safe-msync)
     BUILD_LABEL=build-wine-safe-msync
     ROOT="$REPO_DIR/build/wine-safe-msync"
-    PROVENANCE_NAME=wine-11.17-git.913e31f-zzz-dx12-p3-safe-msync-gptk4b2
+    PROVENANCE_NAME=wine-11.17-git.913e31f-hsr-safe-msync
     RUNTIME_ID=11.17-p3-safe-msync
-    PACKAGE_COMMAND=scripts/package-wine-safe-msync-runtime.sh
+    PACKAGE_COMMAND=scripts/package-hsr-stock-runtime.sh
     ;;
   *)
     echo "build-wine-tuned: unknown WINE_BUILD_PROFILE: $WINE_BUILD_PROFILE" >&2
@@ -969,7 +969,7 @@ cmd_install() {
   trap - EXIT HUP INT TERM
   write_provenance "$base_tree_sha" "$inherited_tree_sha"
   info "installed mixed-architecture $WINE_BUILD_PROFILE host with the complete rebuilt artifact inventory: $HOST_DIR"
-  info "packaging: $PACKAGE_COMMAND $HOST_DIR $PROVENANCE_FILE $ROOT/package"
+  info "packaging: $PACKAGE_COMMAND $HOST_DIR /path/to/Game_Porting_Toolkit_4.0_beta_2.dmg $REPO_DIR/build/hsr-runtime"
 }
 
 cmd_all() {

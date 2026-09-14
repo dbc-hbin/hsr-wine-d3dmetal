@@ -8,7 +8,7 @@ private struct RegistrationCommand {
             guard arguments.count == 4, arguments[0] == "--resource-path", arguments[2] == "--archive-path",
                   arguments[1].hasPrefix("/"), arguments[3].hasPrefix("/") else {
                 throw NSError(domain: "Registration", code: 10, userInfo: [NSLocalizedDescriptionKey:
-                    "Usage: zzz-wine-register --resource-path ABSOLUTE_UPDATE_PATH --archive-path ABSOLUTE_ARCHIVE_PATH"])
+                    "Usage: hsr-wine-register --resource-path ABSOLUTE_UPDATE_PATH --archive-path ABSOLUTE_ARCHIVE_PATH"])
             }
             let resource = URL(fileURLWithPath: arguments[1]).standardizedFileURL
             let archive = URL(fileURLWithPath: arguments[3]).standardizedFileURL
@@ -23,7 +23,7 @@ private struct RegistrationCommand {
             let attributes = try FileManager.default.attributesOfItem(atPath: current.path)
             let currentDate = attributes[.modificationDate] as? Date ?? Date()
             try ResourceRegistration.register(resourcePath: resource.path, archivePath: archive.path,
-                backupDirectory: support.appendingPathComponent(".zzz-wine-registration/backups").path)
+                backupDirectory: support.appendingPathComponent(".hsr-wine-registration/backups").path)
             // Keep the updated resource newer than the active version, which the
             // installer already made newer than the app bundle's rsync source.
             try FileManager.default.setAttributes([.modificationDate: max(Date(), currentDate.addingTimeInterval(1))],

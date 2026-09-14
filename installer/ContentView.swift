@@ -17,10 +17,10 @@ struct ContentView: View {
                     .foregroundColor(.accentColor)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Wine 11.17 ZZZ DX12 Installer")
+                    Text("HSR Wine D3DMetal Installer")
                         .font(.title2)
                         .fontWeight(.bold)
-                    Text("Install and register the prebuilt D3DMetal (GPTK 4.0b2) Wine runtime for Yaagl ZZZ OS")
+                    Text("Install and register the prebuilt D3DMetal (GPTK 4.0b2) Wine runtime for Yaagl HSR OS")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -41,7 +41,7 @@ struct ContentView: View {
                                 Image(systemName: engine.status.yaaglAppExists ? "checkmark.circle.fill" : "xmark.circle.fill")
                                     .foregroundColor(engine.status.yaaglAppExists ? .green : .red)
                                 Text("Yaagl App:")
-                                TextField("Yaagl ZZZ OS.app path", text: $engine.appPath)
+                                TextField("Yaagl HSR OS.app path", text: $engine.appPath)
                                     .font(.caption)
                                     .textFieldStyle(.roundedBorder)
                                     .onSubmit { engine.refreshStatus() }
@@ -102,12 +102,11 @@ struct ContentView: View {
                     // Features Card
                     GroupBox(label: Label("Prebuilt Runtime", systemImage: "archivebox.fill")) {
                         VStack(alignment: .leading, spacing: 6) {
-                            FeatureRow(icon: "list.bullet.rectangle", title: "Yaagl Wine Menu Registration", desc: "Adds Wine 11.17 ZZZ DX12 (GPTK4.0b2) to Yaagl's Wine menu using the prebuilt archive")
+                            FeatureRow(icon: "list.bullet.rectangle", title: "Yaagl Wine Menu Registration", desc: "Adds Wine 11.17 GPTK4.0b2 to Yaagl's Wine menu using the prebuilt archive")
                             FeatureRow(icon: "arrow.uturn.backward.circle", title: "Backup & Restore", desc: "Preserves Yaagl resources, Wine selection, and Wine directory before installation")
-                            FeatureRow(icon: "bolt.fill", title: "Direct3D 12 (GPTK 4.0b2)", desc: "Native D3D12 hardware acceleration via Apple Metal IR")
+                            FeatureRow(icon: "bolt.fill", title: "Stock D3DMetal (GPTK 4.0b2)", desc: "Apple's stock D3D11 and D3D12 translation through Metal IR")
                             FeatureRow(icon: "cpu.fill", title: "Apple Silicon Native ARM64 Server", desc: "Native arm64 wineserver eliminates Rosetta translation latency")
                             FeatureRow(icon: "memorychip.fill", title: "High-Performance MSync", desc: "Low-overhead synchronization via Mach semaphores and shared memory")
-                            FeatureRow(icon: "archivebox.fill", title: "Metal PSO Cache & Cache Warmup", desc: "Device-lifetime PSO caching to minimize in-game shader micro-stutters")
                             FeatureRow(icon: "cursorarrow.rays", title: "Cursor Rollback & RawInput Fix", desc: "Resolves game cursor switching and focus freezes on initial launch")
                         }
                         .padding(6)
@@ -190,7 +189,7 @@ struct ContentView: View {
                 }) {
                     HStack {
                         Image(systemName: engine.status.currentWineTag == RuntimePackage.targetRuntimeId ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.down.circle.fill")
-                        Text(engine.status.currentWineTag == RuntimePackage.targetRuntimeId ? "Reinstall / Update Wine" : "Install Wine 11.17 ZZZ DX12")
+                        Text(engine.status.currentWineTag == RuntimePackage.targetRuntimeId ? "Reinstall / Update \(RuntimePackage.targetDisplayName)" : "Install \(RuntimePackage.targetDisplayName)")
                             .fontWeight(.semibold)
                     }
                     .padding(.horizontal, 8)

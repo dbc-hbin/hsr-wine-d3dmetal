@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.center()
-        window.title = "Wine 11.17 ZZZ DX12 Installer"
+        window.title = "HSR Wine D3DMetal Installer"
         window.contentView = NSHostingView(rootView: contentView)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -39,7 +39,7 @@ private struct CLIOptions {
 }
 
 private let usage = """
-Usage: zzz-wine-installer (--cli | --install | --restore) [--app-path PATH] [--support-path PATH]
+Usage: hsr-wine-installer (--cli | --install | --restore) [--app-path PATH] [--support-path PATH]
 
 Installs the bundled prebuilt Wine runtime and registers it in Yaagl's Wine menu.
 Use --restore to restore Yaagl's prior Wine registration from its installer backup.
@@ -122,7 +122,7 @@ private struct CLIError: LocalizedError {
 }
 
 private func runCLI(_ options: CLIOptions) -> Never {
-    print("=== Wine 11.17 ZZZ DX12 Installer (CLI Mode) ===")
+    print("=== HSR Wine D3DMetal Installer (CLI Mode) ===")
     let engine = InstallerEngine()
     if let appPath = options.appPath {
         engine.appPath = appPath

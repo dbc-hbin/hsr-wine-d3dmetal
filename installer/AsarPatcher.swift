@@ -287,7 +287,7 @@ public struct AsarPatcher {
     private static func transform(_ source: String, in context: JSContext, archiveURL: String, archivePath: String, displayName: String) throws -> String {
         let archive = URL(fileURLWithPath: archivePath).standardizedFileURL
         let helper = archive.deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(".zzz-wine-registration/zzz-wine-register")
+            .appendingPathComponent("\(RuntimePackage.registrationDirectoryName)/\(RuntimePackage.registrationHelperName)")
         let options = ["registrationHelperPath": helper.path, "archivePath": archive.path]
         guard let function = context.objectForKeyedSubscript("__asarTransform"), let result = function.call(withArguments: [source, RuntimePackage.targetRuntimeId, displayName, archiveURL, options]) else {
             throw AsarPatcherError.transformFailed("Bundled transform did not return a result.")

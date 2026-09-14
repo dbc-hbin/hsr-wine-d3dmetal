@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Yaagl Wine DX12 Installer - Resource Lifecycle Regression Test Suite
+Yaagl HSR Wine D3DMetal Installer - Resource Lifecycle Regression Test Suite
 
 Validates:
 1. Strict requirement of explicit --stock-resource fixture (no userhome/machine paths).
@@ -10,7 +10,7 @@ Validates:
    - app/Contents/Resources/resources.neu bytes and mtime 100% untouched.
    - Pre-existing legacy app/Contents/Resources/resources.neu.bak is 100% untouched.
 5. Support-only resource patching & floor-second mtime safety preventing rsync downgrade.
-6. Automatic update helper (zzz-wine-register) execution on unpatched newer update:
+6. Automatic update helper (hsr-wine-register) execution on unpatched newer update:
    - Patches pending update, retains version, records hash-keyed pristine backup.
    - Emulated updater commit (forceMove) preserves registration and frontend version.
 7. Corrupted / malformed update rejection leaving active support untouched.
@@ -92,31 +92,32 @@ def extract_runtime_archive(archive_path, destination):
 
 def run_suite(stock_bytes, repo_root):
     print("====================================================================")
-    print("Yaagl Wine DX12 Installer - Resource Lifecycle Regression Test Suite")
+    print("Yaagl HSR Wine D3DMetal Installer - Resource Lifecycle Regression Test Suite")
     print("====================================================================")
 
-    installer_app = repo_root / 'installer/ZZZ Wine DX12 Installer.app'
-    installer_bin = installer_app / 'Contents/MacOS/zzz-wine-installer'
-    helper_bin = installer_app / 'Contents/Resources/zzz-wine-register'
+    installer_app = repo_root / 'installer/HSR Wine D3DMetal Installer.app'
+    installer_bin = installer_app / 'Contents/MacOS/hsr-wine-installer'
+    helper_bin = installer_app / 'Contents/Resources/hsr-wine-register'
     if not helper_bin.exists():
-        helper_bin = repo_root / 'installer/zzz-wine-register'
+        helper_bin = repo_root / 'installer/hsr-wine-register'
 
-    runtime_archive_name = 'Wine 11.17 ZZZ DX12 (GPTK4.0b2 macOS26).tar.xz'
-    runtime_target_id = '11.17-zzz-dx12-tuned-stage-parallel-cache-warmup-cursor-rollback-gptk4b2-arm64server'
+    runtime_archive_name = 'wine-11.17-hsr-gptk4b2-stock.tar.xz'
+    runtime_target_id = '11.17-hsr-gptk4b2-stock'
     runtime_archive_source = installer_app / 'Contents/Resources' / runtime_archive_name
 
     assert installer_bin.exists(), f"Installer binary not found: {installer_bin}"
     assert helper_bin.exists(), f"Helper binary not found: {helper_bin}"
     assert runtime_archive_source.exists(), f"Runtime archive not found: {runtime_archive_source}"
 
-    with tempfile.TemporaryDirectory(prefix='zzz-lifecycle-', dir='/tmp') as tmp:
+    with tempfile.TemporaryDirectory(prefix='hsr-lifecycle-', dir='/tmp') as tmp:
         root = pathlib.Path(tmp)
 
         # Use paths with spaces and apostrophes
-        app = root / "Yaagl Test's App.app"
+        paths_root = root / "Yaagl's Paths With Spaces"
+        app = paths_root / "Yaagl HSR OS.app"
         resources = app / "Contents/Resources"
         resources.mkdir(parents=True)
-        support = root / "Yaagl's Support Folder With Spaces"
+        support = paths_root / "Yaagl HSR OS"
         support.mkdir()
 
         app_neu = resources / "resources.neu"
@@ -171,9 +172,9 @@ def run_suite(stock_bytes, repo_root):
         print("  -> PASS: Support resources.neu patched (version 3.0.0 + updater hook retained).")
 
         # 1d. Registration helper deployed
-        helper_deployed = support / ".zzz-wine-registration/zzz-wine-register"
+        helper_deployed = support / ".hsr-wine-registration/hsr-wine-register"
         assert helper_deployed.exists() and os.access(helper_deployed, os.X_OK), "Helper not deployed or not executable!"
-        print("  -> PASS: Registration helper deployed to support/.zzz-wine-registration/zzz-wine-register.")
+        print("  -> PASS: Registration helper deployed to support/.hsr-wine-registration/hsr-wine-register.")
 
         # 1e. Support mtime floor-second strictly > App mtime
         assert int(support_neu.stat().st_mtime) > int(app_neu.stat().st_mtime)
@@ -191,7 +192,7 @@ def run_suite(stock_bytes, repo_root):
         print("\n[SCENARIO 2] Automatic update helper execution on unpatched 3.1.0 update...")
         runtime_before = {path: (support / path).read_bytes() for path in
                           ["wine/bin/wine", "wine/bin/wineserver", ".storage/wine_tag.neustorage", ".storage/wine_state.neustorage"]}
-        archive_path = support / "local-runtimes" / "Wine 11.17 ZZZ DX12 (GPTK4.0b2 macOS26).tar.xz"
+        archive_path = support / "local-runtimes" / "wine-11.17-hsr-gptk4b2-stock.tar.xz"
         assert archive_path.exists(), f"Runtime archive missing at {archive_path}"
 
         update_neu = support / "resources.neu.update"
@@ -207,7 +208,7 @@ def run_suite(stock_bytes, repo_root):
 
         # Pristine backup keyed by patched SHA
         patched_sha = sha256(update_bytes)
-        backup_file = support / ".zzz-wine-registration/backups" / f"{patched_sha}.neu"
+        backup_file = support / ".hsr-wine-registration/backups" / f"{patched_sha}.neu"
         assert backup_file.exists(), "Pristine backup not created!"
         assert sha256(backup_file.read_bytes()) == update_sha_clean, "Backup does not match clean 3.1.0 bytes!"
         print("  -> PASS: Helper patched update and recorded pristine backup keyed by patched SHA.")
@@ -413,7 +414,7 @@ def run_suite(stock_bytes, repo_root):
             "Activation failure modified the persistent state backup!"
         assert helper_deployed.exists() and os.access(helper_deployed, os.X_OK), \
             "Helper was removed on activation failure!"
-        assert (support / ".zzz-wine-registration/backups").is_dir(), \
+        assert (support / ".hsr-wine-registration/backups").is_dir(), \
             "Registration backups were deleted on activation failure!"
         print("  -> PASS: Activation fault restored this attempt's runtime/tag/state and retained the old backup.")
 
@@ -428,7 +429,7 @@ def run_suite(stock_bytes, repo_root):
     print("====================================================================")
 
 def main():
-    parser = argparse.ArgumentParser(description="Yaagl Wine DX12 Resource Lifecycle Regression Tests")
+    parser = argparse.ArgumentParser(description="Yaagl HSR Wine D3DMetal Resource Lifecycle Regression Tests")
     parser.add_argument("--stock-resource", required=True, help="Path to stock Yaagl resources.neu fixture (REQUIRED)")
     parser.add_argument("--repo", help="Repository root path", default=str(pathlib.Path.cwd()))
     args = parser.parse_args()

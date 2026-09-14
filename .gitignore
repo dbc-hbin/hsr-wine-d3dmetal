@@ -8,3 +8,7 @@ build/
 *.tar.gz
 *.dSYM
 *.zip
+installer/HSR Wine D3DMetal Installer.app/
+installer/hsr-wine-installer
+installer/hsr-wine-register
+__pycache__/

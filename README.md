@@ -1,186 +1,62 @@
-# zzz-wine-d3dmetal-dx12
+# HSR Wine D3DMetal
 
-**English** | [한국어 (Korean)](README.ko.md)
+Wine 11.17 source and installer for **Honkai: Star Rail** on Apple Silicon Macs through **Yaagl HSR OS**. This fork keeps the Wine base and its macOS cursor/input changes, while replacing the graphics layer with unmodified Apple GPTK 4.0 beta 2 D3DMetal and MetalIR files. The Yaagl display name is **`Wine 11.17 GPTK4.0b2`**; the internal runtime ID is `11.17-hsr-gptk4b2-stock`.
 
-Optimized Wine 11.17 runtime source code and easy 1-click GUI installer for playing **Zenless Zone Zero (ZZZ)** with **Direct3D 12 (Apple GPTK 4.0b2)** on macOS (Apple Silicon) via **Yaagl ZZZ OS**.
+This HSR runtime uses the game's valid Direct3D 11 path. It does **not** add or force `-use-d3d12`, inject DXMT, apply the former FP64 MetalIR patch, or load the former native PSO bridge.
 
-The installer installs the included prebuilt Wine package and registers **`Wine 11.17 ZZZ DX12 (GPTK4.0b2)`** in Yaagl's Wine menu.
+## Requirements
 
-**Deployment target: macOS 26.0 or later on Apple Silicon, with Rosetta 2.** v1.0.5 rebuilds 45 Wine artifacts from fresh build directories, including the cursor ownership/RawInput separation change; the seven rebuilt native modules target macOS 26.0 using SDK 26.5. The remaining Wine files are inherited from the pinned P3 package. Other tuned patches, native PSO caching, and `D3DM_MTL4=1` are unchanged.
+- Apple Silicon Mac
+- macOS 26 or later
+- Rosetta 2
+- Yaagl HSR OS
 
-`libdxccontainer.dylib` is required by D3DMetal for DXIL container parsing and DXBC/HLSL conversion. Its original Apple binary is retained byte-for-byte, including its recorded minimum version of 26.4; no 26.4-only imported API was identified. The Wine configuration batch and DX12 graphics/compute/ray-tracing GPU readbacks passed on macOS 27. **Execution on macOS 26 hardware has not yet been verified.**
+## Install and restore
 
----
+No release asset has been published yet. When a distribution ZIP is provided, extract `HSRWineD3DMetalInstaller.zip`, quit Yaagl HSR OS, and open **HSR Wine D3DMetal Installer.app**. The app installs the bundled `wine-11.17-hsr-gptk4b2-stock.tar.xz`, registers **`Wine 11.17 GPTK4.0b2`**, and preserves the previous Yaagl resources and Wine selection for restoration. Use the installer's Restore action to return to that saved state.
 
-## ⚡ Quick Start (Easy 1-Click GUI Installer)
+The app is not notarized or Developer ID signed. macOS may block its first launch; after verifying the downloaded file, use Finder's **Open** context-menu action or Privacy & Security settings to allow it. Do not disable Gatekeeper globally.
 
-You do not need to build from source. An easy native macOS GUI installer is included to set up everything automatically.
+Command-line installation and restoration use `installer/hsr-wine-installer` and target `/Applications/Yaagl HSR OS.app` plus `$HOME/Library/Application Support/Yaagl HSR OS`.
 
-### Option 1: Native GUI Installer (Recommended)
-1. Download [ZZZWineDX12Installer.zip](https://github.com/dbc-hbin/zzz-wine-d3dmetal-dx12/releases/latest/download/ZZZWineDX12Installer.zip).
-2. Extract the zip and open **`ZZZ Wine DX12 Installer.app`**.
-3. The app automatically detects your Yaagl ZZZ OS app and data folders.
-4. Quit Yaagl ZZZ OS, then click **`Install Wine 11.17 ZZZ DX12`**. When this Wine is already selected, the action reads **`Reinstall / Update Wine`**.
-   - Installs the included prebuilt Wine runtime archive for Yaagl.
-   - Registers **`Wine 11.17 ZZZ DX12 (GPTK4.0b2)`** in Yaagl's Wine menu.
-   - Backs up Yaagl's resources, Wine selection, and Wine directory so the prior configuration can be restored.
-5. Launch Yaagl ZZZ OS and select the installed Wine runtime from its Wine menu!
+Repository: <https://github.com/dbc-hbin/hsr-wine-d3dmetal>
 
-The included archive remains in Yaagl's local runtime storage, so you can select this Wine runtime or switch back to another Wine runtime from Yaagl's Wine menu while offline. The installer does not require Node.js.
+## Reproduce the runtime archive
 
-**The same Wine name and ID can be reinstalled.** The new installer's bundled archive replaces both the cached archive and the Wine directory; an identical name is not treated as proof that the installed files are current. Replacement does not leave obsolete files behind. If final Wine-selection activation fails, the runtime and selection from immediately before this attempt are restored, while the original restore backup remains intact. Update means **replace with the build bundled in the installer being run**, not an automatic online search for the latest Wine.
+Apple's binaries are inputs, not rebuilt or patched by this repository. Download `Game_Porting_Toolkit_4.0_beta_2.dmg` from Apple and provide a verified Wine 11.17 base tree/archive built from this source:
 
-### Separate packages for upstream Yaagl
-
-The integration in [Yaagl PR #759](https://github.com/yaagl/yet-another-anime-game-launcher/pull/759) uses two v1.0.5 assets: `wine-11.17-zzz-core-macos26.tar.xz` (root `wine/`) and `d3dmetal-gptk4b2-zzz-v1.0.5.tar.xz` (a relative `lib/` overlay). Yaagl downloads and caches the backend separately and installs it into the extracted Wine directory before Wine initialization. These are a matched pair, not an arbitrary Wine/backend compatibility guarantee. The existing all-in-one archive and GUI installer are unchanged.
-
-Reproduce the split from the verified staged runtime with `bash scripts/package-wine-runtime-split.sh`. The script preserves compiled bytes, permissions, and symlinks, verifies reassembly and signatures, and exercises Wine initialization in a temporary prefix. In the upstream integration, ZZZ has an optional DirectX 12 setting, off by default; it is enabled only for a distribution declaring `supportsD3d12`.
-
-### v1.0.5: rebuilt cursor/RawInput runtime and same-name upgrades
-
-- The bundled Wine now includes `db45a95`: cursor ownership synchronization no longer changes pointer coordinates, and corrected RawInput deltas travel independently. Matching Wine client/server modules were rebuilt together for server protocol **966**.
-- The Wine menu name and runtime ID stay unchanged. Run the v1.0.5 installer to replace an existing same-name runtime and cached archive with the new build. Quit Yaagl and its Wine/game processes first.
-- Registration preserves other Wine catalog entries, including older D3DMetal builds. Failed final activation restores the runtime and selection from immediately before that install attempt without consuming the original restore backup.
-- The extracted release ZIP passed nine installer/update/restore scenarios, three DX12 launch regression checks, and an upgrade from the actual previous protocol-965 archive that replaced all four coupled native modules (`wineserver`, `ntdll`, `winemac`, `win32u`).
-- The final archive passed isolated D3D12 graphics, compute, and ray-tracing GPU readbacks on macOS 27. Cold-start cursor requests, layered-window ownership, and the post-Escape capture transition were exercised in real isolated Wine windows. The cursor captures did not establish macOS native activation or custom-cursor pixels, so they are not a first-native-activation pixel pass or a confirmed invisible-cursor regression. Synthetic pointer input produced no physical RawInput callback; native cursor pixels and the first physical mouse delta remain unverified.
-- The earlier fix for the macOS arrow remaining instead of the game cursor is retained in v1.0.5. The previously reported native-overlay P2 classification is withdrawn: source-level arrow-setter calls alone did not establish an unintended native cursor overwrite.
-
-### v1.0.4: DX12 launch argument delivery
-
-- Preserve the selected distribution identity in the actual Wine runner and add `-use-d3d12` **only for `Wine 11.17 ZZZ DX12 (GPTK4.0b2)`**. Earlier installers checked an absent runner `id`, so a successfully applied patch could still omit the argument.
-- Forward game arguments through both normal and Steam-patch launches. Other D3DMetal Wine distributions are not forced to DX12.
-- Replace the old ID guard and the legacy local backend-wide guard with the scoped condition; repeated installation does not duplicate the argument.
-
-**The latest installer includes these launcher fixes; replacing the Wine archive alone does not apply them.** v1.0.4 rebuilt the installer and update helper but retained the v1.0.2/v1.0.3 Wine archive. v1.0.5 replaces that archive with the rebuilt cursor/RawInput runtime. DX12 execution on physical Tahoe hardware remains unverified.
-
-### v1.0.3: launcher updates and restore
-
-v1.0.3 changes the installer only. The bundled macOS 26 Wine archive and tuning are unchanged from v1.0.2.
-
-- Registration patches the active `resources.neu` in Yaagl’s data folder, not the app bundle. App resources and legacy app backups remain untouched; startup synchronization cannot copy the older app resource over the registered frontend.
-- A native helper in `.zzz-wine-registration` registers Wine in downloaded in-app updates before they replace the active frontend. It runs only during installation or an in-app update; there is no background service and Node.js is not required. Unsupported frontend layouts or helper failures stop the update before replacement.
-- Restore uses the pristine resource for the currently registered generation, never an older whole-resource backup. Preparing another update does not change the active generation’s restore point.
-
-If an earlier installer already downgraded Yaagl, update Yaagl to the desired version first, quit it, then use the latest installer. Full app replacements or externally replaced resources can bypass the in-app hook; run the installer again after those changes.
-
-### Option 2: Terminal CLI
-```bash
-./installer/zzz-wine-installer --install \
-  --app-path "/Applications/Yaagl ZZZ OS.app" \
-  --support-path "$HOME/Library/Application Support/Yaagl ZZZ OS"
-
-# Restore the previous Wine directory
-./installer/zzz-wine-installer --restore \
-  --app-path "/Applications/Yaagl ZZZ OS.app" \
-  --support-path "$HOME/Library/Application Support/Yaagl ZZZ OS"
+```sh
+scripts/package-hsr-stock-runtime.sh \
+  /path/to/wine-11.17-base-or-archive \
+  /path/to/Game_Porting_Toolkit_4.0_beta_2.dmg
 ```
 
----
+The default output is `build/hsr-runtime/wine-11.17-hsr-gptk4b2-stock.tar.xz` with a SHA-256 sidecar. The packager mounts the official evaluation image read-only, verifies its D3DMetal version, Apple signatures, and pinned stock hashes, overlays the complete redist, rejects modified D3DMetal/MetalIR bytes, writes a runtime inventory, and preserves symlinks and permissions. A directly extracted `redist` directory may be supplied instead of the DMG.
 
-## 🚀 Key Optimizations & Patches
+Apple's GPTK license permits distribution only for non-commercial purposes under its terms. The Apple software may run only on supported Apple-branded hardware, and it may not be rented, leased, lent, hosted, sold, modified, or used to create derivative works. The packaged framework retains Apple's license and notices; review the complete license in the official image before distribution.
 
-This build integrates several targeted patches into upstream Wine 11.17 to ensure maximum performance and stability for ZZZ on Apple Silicon.
+## Build and verify
 
-### 1. Direct3D 12 & Apple GPTK 4.0b2 Integration
-- Integrated with Apple's Game Porting Toolkit 4.0b2 D3DMetal and Metal IR translation layer.
-- Fast, high-accuracy translation of DirectX 12 rendering pipelines into native Metal APIs.
+Build the supported Wine base (including this fork's cursor/input changes), package it with the user-provided GPTK image, then build the installer and ZIP:
 
-### 2. Apple Silicon Native ARM64 Wineserver (`0002-native-x86-server.patch`)
-- Upstream x86_64 Wine runs `wineserver` through Rosetta 2 translation, which introduces significant system-call and IPC latency.
-- This build runs `wineserver` natively on Apple Silicon (ARM64), drastically reducing thread synchronization and inter-process communication overhead.
-
-### 3. High-Performance MSync Fast Paths (`0001`, `0003`, `0007`, `0012`)
-- Maps Windows synchronization primitives (Mutexes, Events, Semaphores) directly onto low-overhead macOS Mach semaphores and shared memory.
-- Minimizes thread wait times and kernel context-switch penalties during heavy multi-threaded rendering.
-
-### 4. Metal PSO Cache & Cache Warmup (`libYaaglNativePsoCache`)
-- Dedicated native cache layer to eliminate in-game **micro-stutters** caused by runtime pipeline state object (PSO) and shader compilation.
-- Dedupes shader compilation and retains compiled PSOs across the device lifetime.
-- Cache warmup ensures smooth combat and scene transitions from the very first run.
-
-### 5. Cursor Ownership & RawInput Separation (`0004-macdrv-reset-rawinput-baseline.patch`)
-- Preserves native cursor display and window routing while making ownership synchronization independent of cursor position.
-- Sends warp-corrected mouse deltas separately from pointer coordinates, preserving fractional motion and event coalescing without dropping the first real movement.
-- The v1.0.5 bundled runtime uses server protocol **966** with matching Wine client/server modules. Do not replace only `winemac` or combine it with the older protocol-965 server.
-- Run `node scripts/wine-mac-cursor-input-regression.mjs` for extracted-production input checks. These do not replace native cursor-pixel or in-game camera verification.
-
-### 6. Media, Audio, Window & System Resource Tuning (`0005`, `0006`, `0008` ~ `0014`)
-- **Media Playback**: GStreamer and Media Foundation optimizations prevent cutscene stutters.
-- **Low-Latency Audio**: Refined CoreAudio buffering reduces audio delay.
-- **Window & Network**: Tuned window message queue and socket handling for faster response.
-
----
-
-## 📂 Repository Structure
-
-```
-zzz-wine-d3dmetal-dx12/
-├── external/               # Original Apple GPTK 4.0b2 D3DMetal.framework
-│   └── D3DMetal.framework  # D3DMetal binary and libmetalirconverter.dylib
-├── dlls/                   # Wine 11.17 modified DLL sources
-├── server/                 # ARM64 native wineserver & msync implementation
-├── include/                # Additional headers (msync.h, server_protocol.h)
-├── d3dmetal-pso-cache/     # libYaaglNativePsoCache Objective-C++ source
-├── patches/                # Full patch series (0001 ~ 0014)
-│   ├── wine-tuned/         # 14 tuned performance and bugfix patches
-│   └── wine-p3/            # Baseline host msync & D3DMetal bridge patches
-├── scripts/                # Wine build and packaging scripts
-└── installer/              # SwiftUI native installer source & build artifacts
-    ├── ZZZ Wine DX12 Installer.app  # Pre-built native macOS app bundle
-    ├── zzz-wine-installer           # CLI binary
-    ├── RuntimePackage.swift         # Prebuilt Wine package metadata
-    ├── AsarPatcher.swift            # Yaagl Wine menu registration patcher
-    ├── InstallerEngine.swift        # Auto-detect, install, register & restore engine
-    ├── ContentView.swift            # SwiftUI interface
-    └── resources/typescript.js      # Bundled JavaScript compiler for menu patching
+```sh
+scripts/build-wine-tuned.sh all
+scripts/package-hsr-stock-runtime.sh build/wine-tuned/host /path/to/Game_Porting_Toolkit_4.0_beta_2.dmg
+installer/build.sh
+ditto -c -k --sequesterRsrc --keepParent "installer/HSR Wine D3DMetal Installer.app" HSRWineD3DMetalInstaller.zip
 ```
 
----
+The base build requires the dependency trees and toolchains checked by `scripts/build-wine-tuned.sh preflight`. Verify the HSR resource transformation and isolated installer lifecycle without touching a live game or prefix:
 
-## 🛠️ Building From Source
-
-### Prerequisites
-- macOS 26.0 or later (Apple Silicon M-series), Rosetta 2, and a macOS 26 SDK
-- Xcode Command Line Tools (`xcode-select --install`)
-- LLVM MinGW toolchain (`/opt/llvm-mingw-...`)
-- Bison, Pkg-config, GStreamer dependencies
-- Prepared P3 source, host, dependency tree and provenance; a local GPTK overlay and Steam helper payload. These external build inputs are not downloaded by this repository.
-
-### Build Commands
-```bash
-# Set these to your existing, verified local input directories.
-export WINE_P3_ROOT="/absolute/path/to/prepared/wine-p3"
-export YAAGL_STEAM_HELPER_DIR="/absolute/path/to/protonextras"
-export GPTK_SOURCE="/absolute/path/to/gptk-overlay/wine"
-export MACOSX_DEPLOYMENT_TARGET=26.0
-export SDKROOT="/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
-export WINE_PACKAGE_NAME=wine-11.17-zzz-dx12-gptk4b2-macos26
-export WINE_RUNTIME_ID=11.17-zzz-dx12-tuned-stage-parallel-cache-warmup-cursor-rollback-gptk4b2-arm64server
-
-# 1. Build the Wine overlay in fresh build/wine-tuned directories.
-./scripts/build-wine-tuned.sh all
-
-# 2. Build the native PSO module and package all runtime dependencies.
-./scripts/package-wine-p3-runtime.sh build/wine-tuned/host "$GPTK_SOURCE" \
-  build/wine-tuned/provenance.json build/wine-tuned/package
-
-# 3. Build GUI Installer
-./installer/build.sh
+```sh
+node scripts/test-hsr-launch-regression.mjs
+python3 scripts/test-resource-lifecycle.py
 ```
 
-The installer build requires the new `build/wine-tuned/package/wine-11.17-zzz-dx12-gptk4b2-macos26.tar.xz` archive (or an explicit `RUNTIME_ARCHIVE_SOURCE`). It does not silently bundle an older installed runtime.
+## Input-method caveat
 
-### DX12 launch regression tests
+The user observed intermittent text-input/IME trouble in the HSR login view; later retries allowed login, but the cause was not reproduced or fixed. This project makes no general HSR IME compatibility claim.
 
-```bash
-node --test scripts/test-dx12-launch-regression.mjs
-```
+## License
 
-The checked-in fixture contains excerpts of Yaagl 0.3.18 source; no Wine build output, separate download, or Git history is required. The suite creates runners from the actual transformed catalog and covers normal/Steam launches, preservation of other Wine entries, and migration of both the old ID guard and the backend-wide guard. It does not launch the game or exercise a GPU.
-
----
-
-## 📄 License
-
-- Wine source code is licensed under the **GNU Lesser General Public License (LGPL v2.1+)**.
-- D3DMetal wrapper components and installer tools are licensed under the terms included in this repository.
+Wine source is licensed under the GNU Lesser General Public License; see `COPYING.LIB`. Apple GPTK components remain subject to Apple's license.
