@@ -37,7 +37,7 @@ The included archive remains in Yaagl's local runtime storage, so you can select
 - Registration preserves other Wine catalog entries, including older D3DMetal builds. Failed final activation restores the runtime and selection from immediately before that install attempt without consuming the original restore backup.
 - The extracted release ZIP passed nine installer/update/restore scenarios, three DX12 launch regression checks, and an upgrade from the actual previous protocol-965 archive that replaced all four coupled native modules (`wineserver`, `ntdll`, `winemac`, `win32u`).
 - The final archive passed isolated D3D12 graphics, compute, and ray-tracing GPU readbacks on macOS 27. Cold-start cursor requests, layered-window ownership, and the post-Escape capture transition were exercised in real isolated Wine windows. The cursor captures did not establish macOS native activation or custom-cursor pixels, so they are not a first-native-activation pixel pass or a confirmed invisible-cursor regression. Synthetic pointer input produced no physical RawInput callback; native cursor pixels and the first physical mouse delta remain unverified.
-- Known remaining cursor issue: a repeated cursor payload can overwrite a stationary native overlay cursor with an arrow. This pre-existing P2 is not fixed by the RawInput separation change; source-level reproduction does not establish that it caused the reported in-game camera jump.
+- The earlier fix for the macOS arrow remaining instead of the game cursor is retained in v1.0.5. The previously reported native-overlay P2 classification is withdrawn: source-level arrow-setter calls alone did not establish an unintended native cursor overwrite.
 
 ### v1.0.4: DX12 launch argument delivery
 
