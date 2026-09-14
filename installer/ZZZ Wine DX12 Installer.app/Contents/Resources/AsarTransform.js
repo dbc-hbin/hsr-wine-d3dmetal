@@ -282,9 +282,151 @@
     }];
   }
 
-  globalThis.__asarTransform = function (source, targetId, displayName, archiveURL) {
+  function findUpdaterCommitMove(sourceFile) {
+    var matches = [];
+    visit(sourceFile, function (node) {
+      if (ts.isCallExpression(node) && node.arguments.length >= 2) {
+        var a0 = stringLiteralValue(node.arguments[0]);
+        var a1 = stringLiteralValue(node.arguments[1]);
+        if (a0 === "./resources.neu.update" && a1 === "./resources.neu") {
+          matches.push(node);
+        }
+      }
+    });
+    if (matches.length === 0) throw new Error("could not locate supported Yaagl updater in frontend bundle");
+    if (matches.length > 1) throw new Error("could not unambiguously locate supported Yaagl updater in frontend bundle");
+    return matches[0];
+  }
+
+  function discoverExecAndResolve(sourceFile, calleeName) {
+    var declarations = [];
+    visit(sourceFile, function (node) {
+      if (ts.isFunctionDeclaration(node) && node.name && node.name.text === calleeName) {
+        declarations.push(node);
+      }
+    });
+    if (declarations.length === 0) throw new Error("could not locate updater move function declaration: " + calleeName);
+    if (declarations.length > 1) throw new Error("updater move function declaration is ambiguous: " + calleeName);
+    var calleeDecl = declarations[0];
+
+    var mvCalls = [];
+    visit(calleeDecl, function (node) {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.arguments.length >= 1 && ts.isArrayLiteralExpression(node.arguments[0])) {
+        var arr = node.arguments[0];
+        var hasMv = arr.elements.some(function (el) { return stringLiteralValue(el) === "mv"; });
+        if (hasMv) mvCalls.push({ call: node, arr: arr });
+      }
+    });
+
+    if (mvCalls.length === 0) throw new Error("could not locate move command in updater helper");
+    if (mvCalls.length > 1) throw new Error("multiple move commands in updater helper are ambiguous");
+
+    var moveCall = mvCalls[0];
+    var execIdent = moveCall.call.expression.text;
+    var resolves = [];
+    moveCall.arr.elements.forEach(function (el) {
+      visit(el, function (sub) {
+        if (ts.isCallExpression(sub) && ts.isIdentifier(sub.expression)) {
+          resolves.push(sub.expression.text);
+        }
+      });
+    });
+
+    if (resolves.length < 2) throw new Error("could not locate source and destination path resolution in updater move command");
+    var firstResolve = resolves[0];
+    for (var index = 1; index < resolves.length; index += 1) {
+      if (resolves[index] !== firstResolve) {
+        throw new Error("inconsistent path resolution helpers in updater move command: " + firstResolve + " vs " + resolves[index]);
+      }
+    }
+
+    return { execIdent: execIdent, resolveIdent: firstResolve };
+  }
+
+  function recognizeUpdaterWrapper(moveCall, sourceFile) {
+    var awaitNode = moveCall.parent;
+    if (!ts.isAwaitExpression(awaitNode)) return undefined;
+    var binary = awaitNode.parent;
+    if (!ts.isBinaryExpression(binary) || binary.operatorToken.kind !== ts.SyntaxKind.CommaToken || binary.right !== awaitNode) {
+      return undefined;
+    }
+    var leftBinary = binary.left;
+    if (!ts.isBinaryExpression(leftBinary) || leftBinary.operatorToken.kind !== ts.SyntaxKind.CommaToken) {
+      return undefined;
+    }
+    var assignExpr = leftBinary.left;
+    var helperAwait = leftBinary.right;
+    if (!ts.isAwaitExpression(helperAwait) || !ts.isCallExpression(helperAwait.expression)) return undefined;
+    if (!text(assignExpr, sourceFile).includes("__yaaglD3MetalUpdate")) return undefined;
+
+    var root = binary;
+    if (root.parent && ts.isParenthesizedExpression(root.parent)) {
+      root = root.parent;
+    }
+    return {
+      wrapperNode: root,
+      helperCall: helperAwait.expression,
+      moveAwait: awaitNode
+    };
+  }
+
+  function updaterChanges(sourceFile, options) {
+    var marker = "__yaaglD3MetalUpdate";
+    var sourceText = sourceFile.text;
+    var moveCall = findUpdaterCommitMove(sourceFile);
+    var calleeName = ts.isIdentifier(moveCall.expression) ? moveCall.expression.text : undefined;
+    if (!calleeName) throw new Error("updater commit move callee is not an identifier");
+
+    var discovered = discoverExecAndResolve(sourceFile, calleeName);
+    var updatePathExpr = discovered.resolveIdent + "(\"./resources.neu.update\")";
+    var helperCall = discovered.execIdent + "([" +
+      JSON.stringify(options.registrationHelperPath) + ",\"--resource-path\"," +
+      updatePathExpr + ",\"--archive-path\"," +
+      JSON.stringify(options.archivePath) + "])";
+
+    var existingWrapper = recognizeUpdaterWrapper(moveCall, sourceFile);
+    if (existingWrapper) {
+      var callArgs = existingWrapper.helperCall.arguments;
+      if (callArgs.length === 1 && ts.isArrayLiteralExpression(callArgs[0])) {
+        var elements = callArgs[0].elements;
+        if (elements.length === 5 &&
+            stringLiteralValue(elements[0]) === options.registrationHelperPath &&
+            stringLiteralValue(elements[4]) === options.archivePath) {
+          return [];
+        }
+      }
+      var moveAwaitText = text(existingWrapper.moveAwait, sourceFile);
+      var replacement = "(globalThis." + marker + "=true,await " + helperCall + "," + moveAwaitText + ")";
+      return [{
+        start: existingWrapper.wrapperNode.getStart(sourceFile),
+        end: existingWrapper.wrapperNode.end,
+        replacement: replacement
+      }];
+    }
+
+    if (sourceText.includes(marker)) {
+      throw new Error("unrecognized or corrupt " + marker + " hook present in frontend bundle");
+    }
+
+    var awaitNode = moveCall.parent;
+    if (!ts.isAwaitExpression(awaitNode)) throw new Error("updater commit move is not awaited");
+
+    var originalAwaitText = text(awaitNode, sourceFile);
+    var replacement = "(globalThis." + marker + "=true,await " + helperCall + "," + originalAwaitText + ")";
+
+    return [{
+      start: awaitNode.getStart(sourceFile),
+      end: awaitNode.end,
+      replacement: replacement
+    }];
+  }
+
+  globalThis.__asarTransform = function (source, targetId, displayName, archiveURL, options) {
     try {
       if (typeof source !== "string" || typeof targetId !== "string" || typeof displayName !== "string" || typeof archiveURL !== "string") throw new Error("transform arguments must be strings");
+      if (!options || typeof options !== "object" || typeof options.registrationHelperPath !== "string" || !options.registrationHelperPath || typeof options.archivePath !== "string" || !options.archivePath) {
+        throw new Error("transform options must include registrationHelperPath and archivePath strings");
+      }
       var sourceFile = parse(source);
       var record = JSON.stringify({
         id: targetId,
@@ -303,12 +445,16 @@
       }
       changes = changes.concat(localInstallerChanges(sourceFile, targetId));
       changes = changes.concat(launchChanges(sourceFile, targetId));
+      changes = changes.concat(updaterChanges(sourceFile, options));
       var output = applyChanges(source, changes);
       var outputFile = parse(output);
       var outputCatalog = findTargetDistribution(outputFile, targetId);
       if (!outputCatalog.target) throw new Error("target Wine distribution was not present after transformation");
       if (findTargetDistribution(outputFile, targetId).distributions.filter(function (distribution) { return distribution.id === targetId; }).length !== 1) throw new Error("target Wine distribution was duplicated after transformation");
       if (findTargetDistribution(outputFile, targetId).distributions.some(function (distribution) { return distribution.renderBackend === "d3dmetal" && distribution.id !== targetId; })) throw new Error("obsolete D3Metal Wine distribution remained after transformation");
+      if (!output.includes("__yaaglD3MetalUpdate")) {
+        throw new Error("updater registration hook was not present after transformation");
+      }
       return { source: output, changed: output !== source };
     } catch (error) {
       return { error: error && error.message ? error.message : String(error) };

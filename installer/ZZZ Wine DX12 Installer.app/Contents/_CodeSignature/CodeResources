@@ -6,7 +6,7 @@
 	<dict>
 		<key>Resources/AsarTransform.js</key>
 		<data>
-		g4Y9pjL/fkMW1JtYW/bvZLm28/k=
+		Jv+PxzDcnehqGH5GFh7fttU1ivo=
 		</data>
 		<key>Resources/D3DMetal.framework/Versions/A/D3DMetal</key>
 		<data>
@@ -64,6 +64,10 @@
 		<data>
 		XskuMsiYYlquy/n+caDVvcX25j8=
 		</data>
+		<key>Resources/zzz-wine-register</key>
+		<data>
+		uvHnGKt3FJ4mAlokGtXIzBYZUe8=
+		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
@@ -71,7 +75,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			UVjrgcKSAopWqeH3egO6Ixsgt0nrlpkWYmWuPdv6Rac=
+			c/D500vPeAjvU78v5xn9+r4B2uigDFngcd2vCbx21OA=
 			</data>
 		</dict>
 		<key>Resources/D3DMetal.framework/D3DMetal</key>
@@ -185,6 +189,13 @@
 			<key>hash2</key>
 			<data>
 			OukCySzETazhdcDmnhOksImfaYPGEh12uauN1XlednU=
+			</data>
+		</dict>
+		<key>Resources/zzz-wine-register</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			QbXBuZRgD2ka3lC0r2W3c3V+0en8mCa1PeiYmbxuoMM=
 			</data>
 		</dict>
 	</dict>

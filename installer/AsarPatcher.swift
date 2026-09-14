@@ -70,7 +70,7 @@ public struct AsarPatcher {
             }
             frontendMatched = true
 
-            let transformed = try transform(javascript, in: context, archiveURL: archiveURL, displayName: displayName)
+            let transformed = try transform(javascript, in: context, archiveURL: archiveURL, archivePath: archivePath, displayName: displayName)
             if transformed != javascript {
                 guard replacement == nil else {
                     throw AsarPatcherError.transformFailed("Multiple frontend scripts matched the Wine installer.")
@@ -284,8 +284,12 @@ public struct AsarPatcher {
         throw AsarPatcherError.resourceMissing(resource)
     }
 
-    private static func transform(_ source: String, in context: JSContext, archiveURL: String, displayName: String) throws -> String {
-        guard let function = context.objectForKeyedSubscript("__asarTransform"), let result = function.call(withArguments: [source, RuntimePackage.targetRuntimeId, displayName, archiveURL]) else {
+    private static func transform(_ source: String, in context: JSContext, archiveURL: String, archivePath: String, displayName: String) throws -> String {
+        let archive = URL(fileURLWithPath: archivePath).standardizedFileURL
+        let helper = archive.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".zzz-wine-registration/zzz-wine-register")
+        let options = ["registrationHelperPath": helper.path, "archivePath": archive.path]
+        guard let function = context.objectForKeyedSubscript("__asarTransform"), let result = function.call(withArguments: [source, RuntimePackage.targetRuntimeId, displayName, archiveURL, options]) else {
             throw AsarPatcherError.transformFailed("Bundled transform did not return a result.")
         }
         if let errorValue = result.forProperty("error"), !errorValue.isUndefined, !errorValue.isNull, let error = errorValue.toString(), !error.isEmpty {

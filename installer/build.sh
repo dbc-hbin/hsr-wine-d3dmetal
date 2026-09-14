@@ -25,9 +25,18 @@ swiftc -O \
     -o "$OUTPUT_BIN" \
     RuntimePackage.swift \
     AsarPatcher.swift \
+    ResourceRegistration.swift \
     InstallerEngine.swift \
     ContentView.swift \
     main.swift
+
+echo "==> Compiling update registration helper..."
+swiftc -O -parse-as-library \
+    -target "${ARCH}-apple-macos26.0" \
+    -framework CryptoKit -framework JavaScriptCore \
+    -o zzz-wine-register \
+    RuntimePackage.swift AsarPatcher.swift ResourceRegistration.swift RegistrationMain.swift
+codesign --force --sign - zzz-wine-register
 
 echo "==> Packaging into ${APP_NAME}..."
 rm -rf "$APP_NAME"
@@ -35,6 +44,7 @@ mkdir -p "$APP_NAME/Contents/MacOS"
 mkdir -p "$APP_NAME/Contents/Resources"
 
 cp "$OUTPUT_BIN" "$APP_NAME/Contents/MacOS/$OUTPUT_BIN"
+cp zzz-wine-register "$APP_NAME/Contents/Resources/zzz-wine-register"
 
 for resource in typescript.js AsarTransform.js TypeScript-LICENSE.txt TypeScript-ThirdPartyNotice.txt; do
     source="$DIR/resources/$resource"
@@ -71,9 +81,9 @@ cat << 'PLIST' > "$APP_NAME/Contents/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.2</string>
+    <string>1.0.3</string>
     <key>CFBundleVersion</key>
-    <string>1.0.2</string>
+    <string>1.0.3</string>
     <key>LSMinimumSystemVersion</key>
     <string>26.0</string>
     <key>NSHighResolutionCapable</key>

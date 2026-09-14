@@ -200,8 +200,15 @@ public class InstallerEngine: ObservableObject {
                     self.currentStep = "[3/4] Registering Wine in Yaagl..."
                     self.progress = 0.6
                 }
+                let supportResource = URL(fileURLWithPath: self.supportResourcesPath)
+                let previousSupport = supportResource.deletingLastPathComponent()
+                    .appendingPathComponent(".resources-before-install-\(UUID().uuidString).neu")
+                try FileManager.default.copyItem(at: supportResource, to: previousSupport)
+                defer { try? FileManager.default.removeItem(at: previousSupport) }
+                let hadRegistrationHelper = FileManager.default.fileExists(atPath: self.registrationHelperDirectory)
                 let backupsCreated = try self.backUpLauncherConfiguration()
                 do {
+                    try self.installRegistrationHelper()
                     try self.patchLauncherResources(archivePath: archivePath)
                     DispatchQueue.main.async {
                         self.currentStep = "[4/4] Replacing Yaagl's Wine runtime..."
@@ -211,6 +218,13 @@ public class InstallerEngine: ObservableObject {
                     try self.activateRegisteredRuntime()
                 } catch {
                     self.restoreNewlyCreatedBackups(backupsCreated)
+                    do {
+                        _ = try FileManager.default.replaceItemAt(supportResource, withItemAt: previousSupport,
+                                                                  options: .usingNewMetadataOnly)
+                    } catch {
+                        throw NSError(domain: "Install", code: 54, userInfo: [NSLocalizedDescriptionKey: "Installation failed and Yaagl resources could not be restored: \(error.localizedDescription)"])
+                    }
+                    if !hadRegistrationHelper { self.removeRegistrationHelper() }
                     throw error
                 }
 
@@ -249,6 +263,7 @@ public class InstallerEngine: ObservableObject {
                 }
                 try self.restoreLauncherConfiguration()
                 try self.restoreWineBackup()
+                self.removeRegistrationHelper()
                 try self.removeBackups()
                 DispatchQueue.main.async {
                     self.isWorking = false
@@ -292,7 +307,7 @@ public class InstallerEngine: ObservableObject {
     }
 
     private var backupPaths: [String] {
-        [supportResourcesPath + ".bak", appResourcesPath + ".bak", wineBackupPath,
+        [wineBackupPath,
          (storagePath as NSString).appendingPathComponent("wine_tag.neustorage.bak"),
          (storagePath as NSString).appendingPathComponent("wine_state.neustorage.bak")]
     }
@@ -389,20 +404,135 @@ public class InstallerEngine: ObservableObject {
         }
     }
 
+    private var registrationHelperDirectory: String {
+        (supportPath as NSString).appendingPathComponent(".zzz-wine-registration")
+    }
+
+    private var registrationBackupsDirectory: String {
+        (registrationHelperDirectory as NSString).appendingPathComponent("backups")
+    }
+
+    private func findHelperBinarySource() -> String? {
+        let fileManager = FileManager.default
+        let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let candidates: [String?] = [
+            Bundle.main.resourceURL?.appendingPathComponent("zzz-wine-register").path,
+            executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/zzz-wine-register").path,
+            executable.deletingLastPathComponent().appendingPathComponent("zzz-wine-register").path
+        ]
+        for candidate in candidates.compactMap({ $0 }) {
+            if fileManager.fileExists(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    private func findHelperResourceSource(_ resourceName: String) -> String? {
+        let fileManager = FileManager.default
+        let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let candidates: [String?] = [
+            Bundle.main.resourceURL?.appendingPathComponent(resourceName).path,
+            executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/\(resourceName)").path,
+            executable.deletingLastPathComponent().appendingPathComponent("resources/\(resourceName)").path
+        ]
+        for candidate in candidates.compactMap({ $0 }) {
+            if fileManager.fileExists(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    private func installRegistrationHelper() throws {
+        let fileManager = FileManager.default
+        guard let binSource = findHelperBinarySource() else {
+            throw NSError(domain: "Install", code: 60, userInfo: [NSLocalizedDescriptionKey: "Registration helper executable (zzz-wine-register) was not found."])
+        }
+        guard let tsSource = findHelperResourceSource("typescript.js") else {
+            throw NSError(domain: "Install", code: 61, userInfo: [NSLocalizedDescriptionKey: "Registration helper dependency typescript.js was not found."])
+        }
+        guard let asarTransformSource = findHelperResourceSource("AsarTransform.js") else {
+            throw NSError(domain: "Install", code: 62, userInfo: [NSLocalizedDescriptionKey: "Registration helper dependency AsarTransform.js was not found."])
+        }
+
+        log("Installing Wine registration helper into Yaagl support folder...")
+        let destination = registrationHelperDirectory
+        let staging = (supportPath as NSString).appendingPathComponent(".helper-stage-\(UUID().uuidString)")
+        try fileManager.createDirectory(atPath: staging, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(atPath: staging) }
+
+        // Stage executable
+        let stagedBin = (staging as NSString).appendingPathComponent("zzz-wine-register")
+        try fileManager.copyItem(atPath: binSource, toPath: stagedBin)
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stagedBin)
+
+        // Stage JS resources
+        let stagedResources = (staging as NSString).appendingPathComponent("resources")
+        try fileManager.createDirectory(atPath: stagedResources, withIntermediateDirectories: true)
+        try fileManager.copyItem(atPath: tsSource, toPath: (stagedResources as NSString).appendingPathComponent("typescript.js"))
+        try fileManager.copyItem(atPath: asarTransformSource, toPath: (stagedResources as NSString).appendingPathComponent("AsarTransform.js"))
+
+        if fileManager.fileExists(atPath: registrationBackupsDirectory) {
+            try fileManager.copyItem(atPath: registrationBackupsDirectory,
+                                     toPath: (staging as NSString).appendingPathComponent("backups"))
+        }
+        // Publish the executable and its matching transform together, retaining
+        // the previous complete helper if the directory replacement fails.
+        let displaced = (supportPath as NSString).appendingPathComponent(".helper-previous-\(UUID().uuidString)")
+        let hadHelper = fileManager.fileExists(atPath: destination)
+        if hadHelper { try fileManager.moveItem(atPath: destination, toPath: displaced) }
+        do {
+            try fileManager.moveItem(atPath: staging, toPath: destination)
+        } catch {
+            if hadHelper { try fileManager.moveItem(atPath: displaced, toPath: destination) }
+            throw error
+        }
+        if hadHelper { try? fileManager.removeItem(atPath: displaced) }
+    }
+
+    private func removeRegistrationHelper() {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: registrationHelperDirectory) {
+            log("Removing Wine registration helper from Yaagl support folder...")
+            try? fileManager.removeItem(atPath: registrationHelperDirectory)
+        }
+    }
+
+    private func ensureSupportMtimeNewerThanApp() throws {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: appResourcesPath),
+              fileManager.fileExists(atPath: supportResourcesPath) else {
+            return
+        }
+        let appAttrs = try fileManager.attributesOfItem(atPath: appResourcesPath)
+        let supportAttrs = try fileManager.attributesOfItem(atPath: supportResourcesPath)
+        guard let appMod = appAttrs[.modificationDate] as? Date,
+              let supportMod = supportAttrs[.modificationDate] as? Date else {
+            throw NSError(domain: "Install", code: 53, userInfo: [NSLocalizedDescriptionKey: "Could not read modification dates for Yaagl resources."])
+        }
+        let appSeconds = floor(appMod.timeIntervalSince1970)
+        let supportSeconds = floor(supportMod.timeIntervalSince1970)
+        if supportSeconds <= appSeconds {
+            let targetDate = Date(timeIntervalSince1970: appSeconds + 2.0)
+            try fileManager.setAttributes([.modificationDate: targetDate], ofItemAtPath: supportResourcesPath)
+            log("Adjusted support resources.neu mtime to prevent rsync startup downgrade.")
+        }
+    }
+
     private func backUpLauncherConfiguration() throws -> [String] {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: supportResourcesPath) else {
             throw NSError(domain: "Install", code: 50, userInfo: [NSLocalizedDescriptionKey: "Yaagl support resources.neu was not found."])
         }
-        guard fileManager.fileExists(atPath: appResourcesPath) else {
-            throw NSError(domain: "Install", code: 51, userInfo: [NSLocalizedDescriptionKey: "Yaagl app resources.neu was not found."])
-        }
         try fileManager.createDirectory(atPath: storagePath, withIntermediateDirectories: true)
-        let paths = [supportResourcesPath, appResourcesPath,
-                     (storagePath as NSString).appendingPathComponent("wine_tag.neustorage"),
-                     (storagePath as NSString).appendingPathComponent("wine_state.neustorage")]
+
         var created: [String] = []
-        for path in paths {
+        let storageFiles = [
+            (storagePath as NSString).appendingPathComponent("wine_tag.neustorage"),
+            (storagePath as NSString).appendingPathComponent("wine_state.neustorage")
+        ]
+        for path in storageFiles {
             let backup = path + ".bak"
             if fileManager.fileExists(atPath: backup) { continue }
             if fileManager.fileExists(atPath: path) {
@@ -414,12 +544,14 @@ public class InstallerEngine: ObservableObject {
             }
             created.append(backup)
         }
+
         return created
     }
 
     private func patchLauncherResources(archivePath: String) throws {
-        try AsarPatcher.patch(sourcePath: supportResourcesPath, outputPath: supportResourcesPath, archivePath: archivePath, displayName: RuntimePackage.targetDisplayName)
-        try AsarPatcher.patch(sourcePath: appResourcesPath, outputPath: appResourcesPath, archivePath: archivePath, displayName: RuntimePackage.targetDisplayName)
+        log("Registering Wine runtime in Yaagl support resources.neu...")
+        try ResourceRegistration.register(resourcePath: supportResourcesPath, archivePath: archivePath, backupDirectory: registrationBackupsDirectory)
+        try ensureSupportMtimeNewerThanApp()
     }
 
     private func replaceWine(withStagedWineAt stagedWine: String) throws {
@@ -485,21 +617,32 @@ public class InstallerEngine: ObservableObject {
     }
 
     private func restoreLauncherConfiguration() throws {
-        for path in [supportResourcesPath, appResourcesPath,
-                     (storagePath as NSString).appendingPathComponent("wine_tag.neustorage"),
+        let fileManager = FileManager.default
+
+        log("Restoring Yaagl support resources.neu configuration...")
+        let restored = try ResourceRegistration.restore(resourcePath: supportResourcesPath, backupDirectory: registrationBackupsDirectory)
+        if restored {
+            log("Restored Yaagl support resources.neu from registration backup.")
+        } else {
+            log("Preserving updated Yaagl resources.neu (frontend has been updated by an official release).")
+        }
+        try ensureSupportMtimeNewerThanApp()
+
+        // Restore storage state backups (wine_tag and wine_state)
+        for path in [(storagePath as NSString).appendingPathComponent("wine_tag.neustorage"),
                      (storagePath as NSString).appendingPathComponent("wine_state.neustorage")] {
             let backup = path + ".bak"
-            guard FileManager.default.fileExists(atPath: backup) else { continue }
-            let attributes = try FileManager.default.attributesOfItem(atPath: backup)
+            guard fileManager.fileExists(atPath: backup) else { continue }
+            let attributes = try fileManager.attributesOfItem(atPath: backup)
             if let size = attributes[.size] as? NSNumber, size.intValue == 0 {
-                if FileManager.default.fileExists(atPath: path) {
-                    try FileManager.default.removeItem(atPath: path)
+                if fileManager.fileExists(atPath: path) {
+                    try fileManager.removeItem(atPath: path)
                 }
             } else {
-                if FileManager.default.fileExists(atPath: path) {
-                    try FileManager.default.removeItem(atPath: path)
+                if fileManager.fileExists(atPath: path) {
+                    try fileManager.removeItem(atPath: path)
                 }
-                try FileManager.default.copyItem(atPath: backup, toPath: path)
+                try fileManager.copyItem(atPath: backup, toPath: path)
             }
         }
     }

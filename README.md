@@ -28,6 +28,16 @@ You do not need to build from source. An easy native macOS GUI installer is incl
 
 The included archive remains in Yaagl's local runtime storage, so you can select this Wine runtime or switch back to another Wine runtime from Yaagl's Wine menu while offline. The installer does not require Node.js.
 
+### v1.0.3: launcher updates and restore
+
+v1.0.3 changes the installer only. The bundled macOS 26 Wine archive and tuning are unchanged from v1.0.2.
+
+- Registration patches the active `resources.neu` in Yaagl’s data folder, not the app bundle. App resources and legacy app backups remain untouched; startup synchronization cannot copy the older app resource over the registered frontend.
+- A native helper in `.zzz-wine-registration` registers Wine in downloaded in-app updates before they replace the active frontend. It runs only during installation or an in-app update; there is no background service and Node.js is not required. Unsupported frontend layouts or helper failures stop the update before replacement.
+- Restore uses the pristine resource for the currently registered generation, never an older whole-resource backup. Preparing another update does not change the active generation’s restore point.
+
+If an earlier installer already downgraded Yaagl, update Yaagl to the desired version first, quit it, then install with v1.0.3. Full app replacements or externally replaced resources can bypass the in-app hook; run the installer again after those changes.
+
 ### Option 2: Terminal CLI
 ```bash
 ./installer/zzz-wine-installer --install \
