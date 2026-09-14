@@ -256,8 +256,6 @@
     });
     if (matches.length !== 1) throw new Error("could not unambiguously locate the game launch function");
     var functionNode = matches[0];
-    var bodyText = text(functionNode.body, sourceFile);
-    if (bodyText.includes(targetId) && bodyText.includes("-use-d3d12")) return [];
 
     var wineCalls = [];
     visit(functionNode.body, function (node) {
@@ -274,12 +272,50 @@
     if (variables.length !== 1) throw new Error("could not unambiguously locate game launch arguments");
 
     var wine = wineCalls[0];
+    var argumentsName = variables[0].name;
+    var d3d12Statements = [];
+    visit(functionNode.body, function (node) {
+      if (!ts.isExpressionStatement(node)) return;
+      var expression = node.expression;
+      while (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) expression = expression.right;
+      if (ts.isCallExpression(expression) && expression.arguments.length === 1 && stringLiteralValue(expression.arguments[0]) === "-use-d3d12" && propertyAccessName(expression.expression) === "push" && isIdentifierNamed(expression.expression.expression, argumentsName)) d3d12Statements.push(node);
+    });
+
     var target = JSON.stringify(targetId);
-    return [{
+    var d3d12Statement = wine + ".attributes.id===" + target + "&&" + wine + ".attributes.renderBackend===\"d3dmetal\"&&" + argumentsName + ".push(\"-use-d3d12\");";
+    var changes = d3d12Statements.length ? [{
+      start: d3d12Statements[0].getStart(sourceFile),
+      end: d3d12Statements[0].end,
+      replacement: d3d12Statement
+    }] : [{
       start: variables[0].statement.end,
       end: variables[0].statement.end,
-      replacement: wine + ".id===" + target + "&&" + wine + ".attributes.renderBackend===\"d3dmetal\"&&" + variables[0].name + ".push(\"-use-d3d12\");"
+      replacement: d3d12Statement
     }];
+    d3d12Statements.slice(1).forEach(function (statement) {
+      changes.push({ start: statement.getStart(sourceFile), end: statement.end, replacement: "" });
+    });
+
+    var steamBranches = [];
+    visit(functionNode.body, function (node) {
+      if (!ts.isConditionalExpression(node) || !ts.isPropertyAccessExpression(node.condition) || node.condition.name.text !== "steamPatch" || !ts.isArrayLiteralExpression(node.whenTrue)) return;
+      var first = node.whenTrue.elements[0];
+      if (!first || !ts.isCallExpression(first) || propertyAccessName(first.expression) !== "toWinePath" || !isIdentifierNamed(first.expression.expression, wine)) return;
+      steamBranches.push(node.whenTrue);
+    });
+    if (steamBranches.length !== 1) throw new Error("could not unambiguously locate the Steam game launch arguments");
+    var steamArguments = steamBranches[0];
+    var forwardsGameArguments = steamArguments.elements.some(function (element) {
+      return ts.isSpreadElement(element) && isIdentifierNamed(element.expression, argumentsName);
+    });
+    if (!forwardsGameArguments) {
+      changes.push({
+        start: steamArguments.end - 1,
+        end: steamArguments.end - 1,
+        replacement: ",..." + argumentsName
+      });
+    }
+    return changes;
   }
 
   function findUpdaterCommitMove(sourceFile) {
@@ -432,7 +468,7 @@
         id: targetId,
         displayName: displayName,
         remoteUrl: archiveURL,
-        attributes: { renderBackend: "d3dmetal", winePath: "wine" }
+        attributes: { id: targetId, renderBackend: "d3dmetal", winePath: "wine" }
       });
       var catalog = findTargetDistribution(sourceFile, targetId);
       var changes = [];
