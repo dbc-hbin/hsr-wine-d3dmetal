@@ -214,8 +214,29 @@ public class InstallerEngine: ObservableObject {
                         self.currentStep = "[4/4] Replacing Yaagl's Wine runtime..."
                         self.progress = 0.8
                     }
-                    try self.replaceWine(withStagedWineAt: (stagingDirectory as NSString).appendingPathComponent("wine"))
-                    try self.activateRegisteredRuntime()
+                    let selectionBeforeActivation = try self.activeWineSelection()
+                    let wineReplacement = try self.replaceWine(withStagedWineAt: (stagingDirectory as NSString).appendingPathComponent("wine"))
+                    do {
+                        try self.activateRegisteredRuntime()
+                        try self.completeWineReplacement(displacedWine: wineReplacement.displacedWine,
+                                                         hasPersistentBackup: wineReplacement.hasPersistentBackup)
+                    } catch {
+                        var restorationFailures: [String] = []
+                        do {
+                            try self.restoreWineReplacement(displacedWine: wineReplacement.displacedWine)
+                        } catch {
+                            restorationFailures.append("Wine runtime: \(error.localizedDescription)")
+                        }
+                        do {
+                            try self.restoreActiveWineSelection(selectionBeforeActivation)
+                        } catch {
+                            restorationFailures.append("Wine selection: \(error.localizedDescription)")
+                        }
+                        if !restorationFailures.isEmpty {
+                            throw NSError(domain: "Install", code: 55, userInfo: [NSLocalizedDescriptionKey: "Installation failed and this attempt could not be fully rolled back: \(restorationFailures.joined(separator: "; "))"])
+                        }
+                        throw error
+                    }
                 } catch {
                     self.restoreNewlyCreatedBackups(backupsCreated)
                     do {
@@ -335,11 +356,12 @@ public class InstallerEngine: ObservableObject {
         let destination = (localRuntimes as NSString).appendingPathComponent(RuntimePackage.targetArchiveName)
 
         if let bundledArchive = bundledArchive() {
-            log("Copying bundled runtime archive to Yaagl: \(bundledArchive)")
+            let replacesCachedArchive = fileManager.fileExists(atPath: destination)
+            log(replacesCachedArchive ? "Replacing Yaagl's cached runtime archive with bundled runtime bytes." : "Installing bundled runtime bytes into Yaagl's runtime cache.")
             let temporaryDestination = destination + ".tmp.\(UUID().uuidString)"
             do {
                 try fileManager.copyItem(atPath: bundledArchive, toPath: temporaryDestination)
-                if fileManager.fileExists(atPath: destination) {
+                if replacesCachedArchive {
                     _ = try fileManager.replaceItemAt(URL(fileURLWithPath: destination), withItemAt: URL(fileURLWithPath: temporaryDestination))
                 } else {
                     try fileManager.moveItem(atPath: temporaryDestination, toPath: destination)
@@ -554,34 +576,91 @@ public class InstallerEngine: ObservableObject {
         try ensureSupportMtimeNewerThanApp()
     }
 
-    private func replaceWine(withStagedWineAt stagedWine: String) throws {
+    private func replaceWine(withStagedWineAt stagedWine: String) throws -> (displacedWine: String?, hasPersistentBackup: Bool) {
         let fileManager = FileManager.default
-        let displacedWine = (supportPath as NSString).appendingPathComponent(".wine-replaced-\(UUID().uuidString)")
         let hadWine = fileManager.fileExists(atPath: winePath)
-        let hasBackup = fileManager.fileExists(atPath: wineBackupPath)
-        if hadWine {
-            let destination = hasBackup ? displacedWine : wineBackupPath
-            log(hasBackup ? "Temporarily moving the active Wine runtime aside." : "Preserving the previous Wine runtime.")
-            try fileManager.moveItem(atPath: winePath, toPath: destination)
+        let hasPersistentBackup = fileManager.fileExists(atPath: wineBackupPath)
+        let displacedWine = hadWine ? (supportPath as NSString).appendingPathComponent(".wine-replaced-\(UUID().uuidString)") : nil
+        if let displacedWine {
+            log("Holding the active Wine runtime until the replacement runtime is selected.")
+            try fileManager.moveItem(atPath: winePath, toPath: displacedWine)
         }
         do {
             try fileManager.moveItem(atPath: stagedWine, toPath: winePath)
         } catch {
-            if hadWine {
-                let displaced = hasBackup ? displacedWine : wineBackupPath
-                if fileManager.fileExists(atPath: displaced) {
-                    do {
-                        try fileManager.moveItem(atPath: displaced, toPath: winePath)
-                    } catch {
-                        throw NSError(domain: "Install", code: 32, userInfo: [NSLocalizedDescriptionKey: "Could not install the new Wine runtime and could not restore the previous runtime: \(error.localizedDescription)"])
-                    }
+            if let displacedWine, fileManager.fileExists(atPath: displacedWine) {
+                do {
+                    try fileManager.moveItem(atPath: displacedWine, toPath: winePath)
+                } catch {
+                    throw NSError(domain: "Install", code: 32, userInfo: [NSLocalizedDescriptionKey: "Could not install the replacement Wine runtime and could not restore the active runtime: \(error.localizedDescription)"])
                 }
             }
             throw error
         }
-        if hadWine && hasBackup {
+        return (displacedWine, hasPersistentBackup)
+    }
+
+    private func completeWineReplacement(displacedWine: String?, hasPersistentBackup: Bool) throws {
+        guard let displacedWine else { return }
+        let fileManager = FileManager.default
+        if hasPersistentBackup {
             try fileManager.removeItem(atPath: displacedWine)
+        } else {
+            try fileManager.moveItem(atPath: displacedWine, toPath: wineBackupPath)
+            log("Preserved the previous Wine runtime for Restore Backup.")
         }
+    }
+
+    private func restoreWineReplacement(displacedWine: String?) throws {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: winePath) {
+            try fileManager.removeItem(atPath: winePath)
+        }
+        if let displacedWine {
+            try fileManager.moveItem(atPath: displacedWine, toPath: winePath)
+            log("Restored the active Wine runtime from this installation attempt.")
+        }
+    }
+
+    private func activeWineSelection() throws -> (tag: Data?, state: Data?) {
+        let fileManager = FileManager.default
+        let tagPath = (storagePath as NSString).appendingPathComponent("wine_tag.neustorage")
+        let statePath = (storagePath as NSString).appendingPathComponent("wine_state.neustorage")
+        let tag: Data?
+        if fileManager.fileExists(atPath: tagPath) {
+            tag = try Data(contentsOf: URL(fileURLWithPath: tagPath))
+        } else {
+            tag = nil
+        }
+        let state: Data?
+        if fileManager.fileExists(atPath: statePath) {
+            state = try Data(contentsOf: URL(fileURLWithPath: statePath))
+        } else {
+            state = nil
+        }
+        return (tag, state)
+    }
+
+    private func restoreActiveWineSelection(_ selection: (tag: Data?, state: Data?)) throws {
+        let fileManager = FileManager.default
+        let paths = [
+            ((storagePath as NSString).appendingPathComponent("wine_tag.neustorage"), selection.tag),
+            ((storagePath as NSString).appendingPathComponent("wine_state.neustorage"), selection.state)
+        ]
+        for (path, data) in paths {
+            if let data,
+               let current = try? Data(contentsOf: URL(fileURLWithPath: path)),
+               current == data {
+                continue
+            }
+            if fileManager.fileExists(atPath: path) {
+                try fileManager.removeItem(atPath: path)
+            }
+            if let data {
+                try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+            }
+        }
+        log("Restored Yaagl's Wine selection from this installation attempt.")
     }
 
     private func activateRegisteredRuntime() throws {

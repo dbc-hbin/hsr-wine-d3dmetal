@@ -486,8 +486,7 @@
       var outputFile = parse(output);
       var outputCatalog = findTargetDistribution(outputFile, targetId);
       if (!outputCatalog.target) throw new Error("target Wine distribution was not present after transformation");
-      if (findTargetDistribution(outputFile, targetId).distributions.filter(function (distribution) { return distribution.id === targetId; }).length !== 1) throw new Error("target Wine distribution was duplicated after transformation");
-      if (findTargetDistribution(outputFile, targetId).distributions.some(function (distribution) { return distribution.renderBackend === "d3dmetal" && distribution.id !== targetId; })) throw new Error("obsolete D3Metal Wine distribution remained after transformation");
+      if (outputCatalog.distributions.filter(function (distribution) { return distribution.id === targetId; }).length !== 1) throw new Error("target Wine distribution was duplicated after transformation");
       if (!output.includes("__yaaglD3MetalUpdate")) {
         throw new Error("updater registration hook was not present after transformation");
       }

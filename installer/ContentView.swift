@@ -189,8 +189,8 @@ struct ContentView: View {
                     }
                 }) {
                     HStack {
-                        Image(systemName: "arrow.down.circle.fill")
-                        Text("Install Wine 11.17 ZZZ DX12")
+                        Image(systemName: engine.status.currentWineTag == RuntimePackage.targetRuntimeId ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.down.circle.fill")
+                        Text(engine.status.currentWineTag == RuntimePackage.targetRuntimeId ? "Reinstall / Update Wine" : "Install Wine 11.17 ZZZ DX12")
                             .fontWeight(.semibold)
                     }
                     .padding(.horizontal, 8)

@@ -1,48 +1,80 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { test } from "node:test";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const upstreamArchive = join(repoRoot, "build/upstream-0.3.18/resources_napos.neu");
+const fixturePath = join(repoRoot, "scripts/fixtures/dx12-launch-regression-upstream-0.3.18.js");
 const transformerOption = process.argv.indexOf("--transformer");
 assert.ok(transformerOption === -1 || process.argv[transformerOption + 1], "--transformer requires a path");
 const transformerPath = transformerOption === -1
   ? join(repoRoot, "installer/resources/AsarTransform.js")
   : resolve(process.argv[transformerOption + 1]);
 const targetId = "11.17-zzz-dx12-tuned-stage-parallel-cache-warmup-cursor-rollback-gptk4b2-arm64server";
-const otherD3DMetalId = "other-d3dmetal-wine";
 const transformerOptions = {
   registrationHelperPath: "/safe/zzz-wine-register",
   archivePath: "/safe/wine.tar.xz",
 };
 
-function archiveFile(archive, pathname) {
-  const headerSize = archive.readUInt32LE(8);
-  const headerLength = archive.readUInt32LE(12);
-  let entry = JSON.parse(archive.subarray(16, 16 + headerLength).toString("utf8")).files;
-  for (const component of pathname.split("/")) {
-    entry = entry[component];
-    assert.ok(entry, `upstream archive does not contain ${pathname}`);
-    if (entry.files) entry = entry.files;
+function staticPropertyName(ts, name) {
+  return name && (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) ? name.text : undefined;
+}
+
+function property(ts, object, name) {
+  return object.properties.find(item => ts.isPropertyAssignment(item) && staticPropertyName(ts, item.name) === name);
+}
+
+function stringValue(ts, node) {
+  return ts.isStringLiteralLike(node) ? node.text : undefined;
+}
+
+function catalogEntry(ts, node) {
+  if (!ts.isObjectLiteralExpression(node)) return undefined;
+  const id = property(ts, node, "id");
+  const displayName = property(ts, node, "displayName");
+  const remoteUrl = property(ts, node, "remoteUrl");
+  const attributes = property(ts, node, "attributes");
+  if (!id || !displayName || !remoteUrl || !attributes || !ts.isObjectLiteralExpression(attributes.initializer)) return undefined;
+  const entry = {
+    id: stringValue(ts, id.initializer),
+    displayName: stringValue(ts, displayName.initializer),
+    remoteUrl: stringValue(ts, remoteUrl.initializer),
+    attributes: {},
+  };
+  if (!entry.id || !entry.displayName || !entry.remoteUrl) return undefined;
+  for (const attribute of attributes.initializer.properties) {
+    if (!ts.isPropertyAssignment(attribute)) continue;
+    const name = staticPropertyName(ts, attribute.name);
+    const value = stringValue(ts, attribute.initializer);
+    if (name && value !== undefined) entry.attributes[name] = value;
   }
-  assert.equal(typeof entry.size, "number", `${pathname} is not an archive file`);
-  const start = 12 + headerSize + Number(entry.offset);
-  return archive.subarray(start, start + entry.size).toString("utf8");
+  return entry.attributes.renderBackend && entry.attributes.winePath ? entry : undefined;
+}
+
+function catalogEntries(ts, source) {
+  const file = ts.createSourceFile("upstream.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  assert.equal(file.parseDiagnostics.length, 0, "fixture or transformed source must parse");
+  const candidates = [];
+  const visit = node => {
+    if (ts.isArrayLiteralExpression(node)) {
+      const entries = node.elements.map(element => catalogEntry(ts, element));
+      if (entries.length && entries.every(Boolean)) candidates.push(entries);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  candidates.sort((left, right) => right.length - left.length);
+  assert.ok(candidates.length, "supported upstream fixture must retain a Wine distribution catalog");
+  assert.ok(candidates.length === 1 || candidates[0].length > candidates[1].length, "Wine distribution catalog is ambiguous");
+  return candidates[0];
 }
 
 function loadTransformer(pathname) {
-  const transformerDirectory = dirname(pathname);
-  const adjacentTypeScript = join(transformerDirectory, "typescript.js");
-  const typeScriptPath = existsSync(adjacentTypeScript)
-    ? adjacentTypeScript
-    : join(dirname(transformerPath), "typescript.js");
+  const typeScriptPath = join(repoRoot, "installer/resources/typescript.js");
   const context = vm.createContext({ URL });
-  vm.runInContext(readFileSync(typeScriptPath, "utf8"), context, {
-    filename: typeScriptPath,
-  });
+  vm.runInContext(readFileSync(typeScriptPath, "utf8"), context, { filename: typeScriptPath });
   vm.runInContext(readFileSync(pathname, "utf8"), context, { filename: pathname });
   assert.equal(typeof context.__asarTransform, "function", "transformer did not register its entry point");
   return { transform: context.__asarTransform, ts: context.ts };
@@ -70,19 +102,19 @@ function upstreamFunctions(ts, source) {
     ts.forEachChild(node, visit);
   };
   visit(file);
-  assert.equal(found.size, 2, "supported upstream frontend must retain its runner factory and game launch function");
+  assert.equal(found.size, 2, "supported upstream fixture must retain its runner factory and game launch function");
   return { factory: found.get("oc"), launch: found.get("V_") };
 }
 
-function launchHarness(ts, source, distribution) {
+function launchHarness(ts, source, distro) {
   const writes = new Map();
   const executions = [];
-  const { factory, launch } = upstreamFunctions(ts, source);
+  const functions = upstreamFunctions(ts, source);
   const context = vm.createContext({
     H: {
       join: posix.join,
       dirname: value => {
-        if (typeof value !== "string") throw new Error(`unexpected dirname input: ${JSON.stringify(value)}`);
+        if (typeof value !== "string") throw new Error("unexpected dirname input: " + JSON.stringify(value));
         return posix.dirname(value);
       },
     },
@@ -117,7 +149,7 @@ function launchHarness(ts, source, distribution) {
     j_: async () => {},
     Date,
   });
-  vm.runInContext(`${factory}\nglobalThis.__runnerFactory=oc;\n${launch}\nglobalThis.__launch=V_;`, context, {
+  vm.runInContext([functions.factory, "globalThis.__runnerFactory=oc;", functions.launch, "globalThis.__launch=V_;"].join("\n"), context, {
     filename: "transformed-upstream-launch.js",
   });
 
@@ -125,10 +157,8 @@ function launchHarness(ts, source, distribution) {
     async run(steamPatch) {
       const runner = await context.__runnerFactory({
         prefix: "/safe/prefix",
-        distro: distribution,
+        distro,
       });
-      assert.equal(Object.hasOwn(runner, "id"), false, "upstream runner must be used without an invented runner.id");
-      assert.equal(runner.attributes.id, distribution.attributes.id, "actual oc factory must preserve distro attributes");
 
       const config = {
         resolutionCustom: false,
@@ -145,19 +175,10 @@ function launchHarness(ts, source, distribution) {
         config,
         server: { id: "nap_global" },
       })) {
-        // The UI state yields are deliberately not part of this launch-boundary regression.
+        // UI state yields are outside this launch-boundary regression.
       }
       return { writes, executions };
     },
-  };
-}
-
-function distribution(id, backend = "d3dmetal") {
-  return {
-    id,
-    displayName: id,
-    remoteUrl: "file:///safe/wine.tar.xz",
-    attributes: { id, renderBackend: backend, winePath: "wine" },
   };
 }
 
@@ -169,67 +190,89 @@ function useD3D12Count(value) {
 
 async function assertLaunchArguments(ts, transformedSource, distro, steamPatch, expectedCount) {
   const harness = launchHarness(ts, transformedSource, distro);
-  const { writes, executions } = await harness.run(steamPatch);
+  const result = await harness.run(steamPatch);
   if (steamPatch) {
-    const steam = executions.find(call => call.flat(Infinity).includes("C:\\windows\\system32\\steam.exe"));
+    const steam = result.executions.find(call => call.flat(Infinity).includes("C:\\windows\\system32\\steam.exe"));
     assert.ok(steam, "Steam launch must reach the stubbed process boundary");
     assert.equal(useD3D12Count(steam), expectedCount, "Steam game arguments must contain the expected number of DX12 flags");
     assert.ok(steam.flat(Infinity).includes("Z:\\safe\\game\\ZenlessZoneZero.exe"), "Steam must receive the game executable");
   } else {
-    const batch = writes.get("/safe/working/config.bat");
+    const batch = result.writes.get("/safe/working/config.bat");
     assert.ok(batch, "normal launch must write its game batch file");
     assert.equal(useD3D12Count(batch), expectedCount, "normal game batch must contain the expected number of DX12 flags");
     assert.match(batch, /ZenlessZoneZero\.exe/, "normal game batch must invoke the game executable");
   }
 }
 
+async function assertCatalogLaunches(ts, source, entries, expectedCount) {
+  for (const entry of entries) {
+    for (const steamPatch of [false, true]) {
+      await assertLaunchArguments(ts, source, entry, steamPatch, expectedCount(entry));
+    }
+  }
+}
+
+function generatedGuard() {
+  return "n.attributes.id===\"" + targetId + "\"&&n.attributes.renderBackend===\"d3dmetal\"&&u.push(\"-use-d3d12\");";
+}
+
+function historicLaunchSource(transformer, source, replacement) {
+  const baseline = transformSource(transformer, source);
+  const guard = generatedGuard();
+  assert.ok(baseline.source.includes(guard), "baseline transform must install the current launch guard");
+  const historical = baseline.source.replace(guard, replacement);
+  assert.notEqual(historical, baseline.source, "historical launch guard replacement must apply");
+  catalogEntries(transformer.ts, historical);
+  return historical;
+}
+
 async function assertFixedTransformer(transformer, source) {
+  const originalCatalog = catalogEntries(transformer.ts, source);
+  assert.equal(originalCatalog.some(entry => entry.id === targetId), false, "historical catalog fixture must not pre-seed the target");
+  assert.ok(originalCatalog.filter(entry => entry.attributes.renderBackend === "d3dmetal").length >= 3, "fixture must retain prior D3DMetal menu entries");
+
   const first = transformSource(transformer, source);
   assert.equal(first.changed, true, "first registration must modify the pristine upstream frontend");
+  const transformedCatalog = catalogEntries(transformer.ts, first.source);
+  const target = transformedCatalog.find(entry => entry.id === targetId);
+  assert.ok(target, "transformed catalog must contain the requested target");
+  assert.deepEqual(transformedCatalog.filter(entry => entry.id !== targetId), originalCatalog, "unrelated and prior Wine catalog entries must remain byte-equivalent data");
+
+  await assertCatalogLaunches(transformer.ts, first.source, transformedCatalog, entry => entry.id === targetId ? 1 : 0);
 
   const second = transformSource(transformer, first.source);
   assert.equal(second.changed, false, "re-registering an already transformed frontend must be idempotent");
   assert.equal(second.source, first.source, "idempotent registration must retain the transformed frontend byte-for-byte");
-
-  for (const steamPatch of [false, true]) {
-    await assertLaunchArguments(transformer.ts, first.source, distribution(targetId), steamPatch, 1);
-    await assertLaunchArguments(transformer.ts, first.source, distribution(otherD3DMetalId), steamPatch, 0);
-  }
 }
 
-function optionalLegacyTransformerPath() {
-  const position = process.argv.indexOf("--legacy-transformer");
-  if (position === -1) return undefined;
-  const pathname = process.argv[position + 1];
-  assert.ok(pathname, "--legacy-transformer requires a path");
-  return resolve(pathname);
+async function assertLegacyUpgrade(transformer, source, replacement, priorCount, expectedReplacementOccurrences) {
+  const historical = historicLaunchSource(transformer, source, replacement);
+  const historicalCatalog = catalogEntries(transformer.ts, historical);
+  await assertCatalogLaunches(transformer.ts, historical, historicalCatalog, priorCount);
+
+  const upgraded = transformSource(transformer, historical);
+  assert.equal(upgraded.changed, true, "current transformer must upgrade the prior launch guard");
+  assert.equal(upgraded.source.split(replacement).length - 1, expectedReplacementOccurrences, "current transformer must replace the prior launch guard instead of adding another one");
+  const upgradedCatalog = catalogEntries(transformer.ts, upgraded.source);
+  await assertCatalogLaunches(transformer.ts, upgraded.source, upgradedCatalog, entry => entry.id === targetId ? 1 : 0);
+
+  const repeatedUpgrade = transformSource(transformer, upgraded.source);
+  assert.equal(repeatedUpgrade.changed, false, "upgrading a historical frontend must become idempotent");
 }
 
-const upstreamSource = archiveFile(readFileSync(upstreamArchive), "dist/assets/index.6abd63f7.js");
+const upstreamSource = readFileSync(fixturePath, "utf8");
 const transformer = loadTransformer(transformerPath);
-const legacyTransformerPath = optionalLegacyTransformerPath();
 
-test("DX12 launch registration reaches only the selected D3DMetal runtime", async () => {
+test("DX12 launch registration uses transformed catalog entries and leaves prior Wine entries unforced", async () => {
   await assertFixedTransformer(transformer, upstreamSource);
 });
 
-if (legacyTransformerPath) {
-  test("saved pre-fix transformer demonstrates the repaired runtime boundary", async () => {
-    const legacy = loadTransformer(legacyTransformerPath);
-    const priorPatched = transformSource(legacy, upstreamSource);
-    assert.equal(priorPatched.changed, true, "saved pre-fix transformer must transform the supported upstream frontend");
+test("DX12 launch registration upgrades the historical absent-runner-id guard", async () => {
+  const replacement = "n.id===\"" + targetId + "\"&&u.push(\"-use-d3d12\");";
+  await assertLegacyUpgrade(transformer, upstreamSource, replacement, () => 0, 0);
+});
 
-    // This invokes the real oc-created runner. It has no runner.id, so the old
-    // guard cannot put the flag in the normal batch path.
-    await assertLaunchArguments(legacy.ts, priorPatched.source, distribution(targetId), false, 0);
-
-    const upgraded = transformSource(transformer, priorPatched.source);
-    assert.equal(upgraded.changed, true, "the current transformer must upgrade a previously patched frontend");
-    for (const steamPatch of [false, true]) {
-      await assertLaunchArguments(transformer.ts, upgraded.source, distribution(targetId), steamPatch, 1);
-      await assertLaunchArguments(transformer.ts, upgraded.source, distribution(otherD3DMetalId), steamPatch, 0);
-    }
-    const repeatedUpgrade = transformSource(transformer, upgraded.source);
-    assert.equal(repeatedUpgrade.changed, false, "upgrading a previously patched frontend must become idempotent");
-  });
-}
+test("DX12 launch registration upgrades the historical backend-only guard", async () => {
+  const replacement = "n.attributes.renderBackend===\"d3dmetal\"&&u.push(\"-use-d3d12\");";
+  await assertLegacyUpgrade(transformer, upstreamSource, replacement, entry => entry.attributes.renderBackend === "d3dmetal" ? 1 : 0, 1);
+});

@@ -17,6 +17,8 @@ Validates:
 8. Reinstall after upstream update.
 9. Hash-keyed restore cleanly restoring matching unpatched version and wine runtime.
 10. Restore on clean upstream preserving current frontend.
+11. Same-ID runtime upgrade replaces a stale target-named cached archive and old Wine tree.
+12. Activation failure restores this attempt's runtime and selection without consuming an older backup.
 """
 
 import argparse
@@ -72,6 +74,22 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def extract_runtime_archive(archive_path, destination):
+    destination.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['/usr/bin/tar', '-xJf', str(archive_path), '-C', str(destination)], check=True)
+    wine = destination / 'wine'
+    assert wine.is_dir(), f"Runtime archive did not contain wine: {archive_path}"
+    return wine
+
+
 def run_suite(stock_bytes, repo_root):
     print("====================================================================")
     print("Yaagl Wine DX12 Installer - Resource Lifecycle Regression Test Suite")
@@ -83,7 +101,9 @@ def run_suite(stock_bytes, repo_root):
     if not helper_bin.exists():
         helper_bin = repo_root / 'installer/zzz-wine-register'
 
-    runtime_archive_source = installer_app / 'Contents/Resources/Wine 11.17 ZZZ DX12 (GPTK4.0b2 macOS26).tar.xz'
+    runtime_archive_name = 'Wine 11.17 ZZZ DX12 (GPTK4.0b2 macOS26).tar.xz'
+    runtime_target_id = '11.17-zzz-dx12-tuned-stage-parallel-cache-warmup-cursor-rollback-gptk4b2-arm64server'
+    runtime_archive_source = installer_app / 'Contents/Resources' / runtime_archive_name
 
     assert installer_bin.exists(), f"Installer binary not found: {installer_bin}"
     assert helper_bin.exists(), f"Helper binary not found: {helper_bin}"
@@ -233,9 +253,58 @@ def run_suite(stock_bytes, repo_root):
         print("  -> PASS: Reinstall registered into 3.2.0 without downgrade.")
 
         # -------------------------------------------------------------
-        # Scenario 5: Restore on Registered 3.2.0 (Matching Version + Wine)
+        # Scenario 5: Same-ID Upgrade Replaces Stale Cached Runtime
         # -------------------------------------------------------------
-        print("\n[SCENARIO 5] Restore on registered 3.2.0...")
+        print("\n[SCENARIO 5] Same-ID upgrade replaces stale cached runtime...")
+        persistent_wine_backup = support / "wine.bak"
+        persistent_backup_marker = persistent_wine_backup / "PRIOR_WINE_MARKER.txt"
+        assert persistent_wine_backup.is_dir(), "Original Wine restore backup is missing before same-ID upgrade!"
+        assert persistent_backup_marker.read_text() == "PRIOR_WINE_VERSION_FOR_RESTORE_TEST"
+        persistent_backup_wine_hash = sha256_file(persistent_wine_backup / "bin/wine")
+
+        fixture_root = root / "same-id-upgrade-fixture"
+        bundled_runtime = extract_runtime_archive(runtime_archive_source, fixture_root / "bundled")
+        stale_archive_root = fixture_root / "cached"
+        shutil.copytree(bundled_runtime, stale_archive_root / "wine", symlinks=True)
+        obsolete_runtime_file = stale_archive_root / "wine" / "obsolete-same-id-runtime-file.txt"
+        obsolete_runtime_file.write_text("stale file from a valid previous target-named runtime\n")
+
+        archive_path = support / "local-runtimes" / runtime_archive_name
+        subprocess.run(["/usr/bin/tar", "-cJf", str(archive_path), "-C", str(stale_archive_root), "wine"], check=True)
+        assert sha256_file(archive_path) != sha256_file(runtime_archive_source), \
+            "Cached target-named archive fixture must differ from the bundled archive!"
+
+        shutil.rmtree(support / "wine")
+        extract_runtime_archive(archive_path, support)
+        assert (support / "wine" / obsolete_runtime_file.name).is_file(), \
+            "Old valid target-named runtime fixture was not installed!"
+        storage_tag = support / ".storage" / "wine_tag.neustorage"
+        storage_state = support / ".storage" / "wine_state.neustorage"
+        storage_tag.write_text(runtime_target_id)
+        storage_state.write_text("ready")
+
+        subprocess.run([str(installer_bin), "--install", "--app-path", str(app), "--support-path", str(support)],
+                       check=True, capture_output=False, timeout=120)
+
+        assert sha256_file(archive_path) == sha256_file(runtime_archive_source), \
+            "Bundled archive did not replace the stale target-named cache!"
+        for relative_path in ["bin/wine", "bin/wineserver"]:
+            assert sha256_file(support / "wine" / relative_path) == sha256_file(bundled_runtime / relative_path), \
+                f"Same-ID upgrade did not install bundled {relative_path}!"
+        assert not (support / "wine" / obsolete_runtime_file.name).exists(), \
+            "Same-ID upgrade left a file that exists only in the old runtime tree!"
+        assert storage_tag.read_text() == runtime_target_id, "Same-ID upgrade did not select the target Wine tag!"
+        assert storage_state.read_text() == "ready", "Same-ID upgrade did not mark the target runtime ready!"
+        assert persistent_backup_marker.read_text() == "PRIOR_WINE_VERSION_FOR_RESTORE_TEST", \
+            "Same-ID upgrade consumed the original Wine restore backup!"
+        assert sha256_file(persistent_wine_backup / "bin/wine") == persistent_backup_wine_hash, \
+            "Same-ID upgrade modified the original Wine restore backup!"
+        print("  -> PASS: Bundled bytes replaced same-ID cache/tree; ready selection and original backup were retained.")
+
+        # -------------------------------------------------------------
+        # Scenario 6: Restore on Registered 3.2.0 (Matching Version + Wine)
+        # -------------------------------------------------------------
+        print("\n[SCENARIO 6] Restore on registered 3.2.0...")
         # A prepared update must not replace the active generation's restore point.
         update_neu.write_bytes(f31)
         subprocess.run([str(helper_deployed), "--resource-path", str(update_neu), "--archive-path", str(archive_path)],
@@ -251,9 +320,9 @@ def run_suite(stock_bytes, repo_root):
         print("  -> PASS: Restore cleanly restored pristine unpatched 3.2.0 and prior Wine runtime.")
 
         # -------------------------------------------------------------
-        # Scenario 6: Restore on Clean Upstream (No-op Safe Preservation)
+        # Scenario 7: Restore on Clean Upstream (No-op Safe Preservation)
         # -------------------------------------------------------------
-        print("\n[SCENARIO 6] Restore on already-clean upstream...")
+        print("\n[SCENARIO 7] Restore on already-clean upstream...")
         subprocess.run([str(installer_bin), "--install", "--app-path", str(app), "--support-path", str(support)],
                        check=True, capture_output=True, text=True, timeout=120)
         clean_update = create_asar_fixture(stock_bytes, "3.3.0")
@@ -265,9 +334,9 @@ def run_suite(stock_bytes, repo_root):
         print("  -> PASS: Restore on clean upstream safely preserved current version.")
 
         # -------------------------------------------------------------
-        # Scenario 7: Subsecond / Integer Floor-Second Boundary
+        # Scenario 8: Subsecond / Integer Floor-Second Boundary
         # -------------------------------------------------------------
-        print("\n[SCENARIO 7] Subsecond boundary rsync safety...")
+        print("\n[SCENARIO 8] Subsecond boundary rsync safety...")
         app_neu.write_bytes(f29); support_neu.write_bytes(f30)
         os.utime(app_neu, (1000.2, 1000.2))
         os.utime(support_neu, (1000.8, 1000.8))
@@ -286,43 +355,76 @@ def run_suite(stock_bytes, repo_root):
         print("  -> PASS: Floor-second mtime enforcement safely prevents rsync clobbering.")
 
         # -------------------------------------------------------------
-        # Scenario 8: Failed Reinstall Rollback Preservation
+        # Scenario 9: Final Activation Failure Restores Current Attempt
         # -------------------------------------------------------------
-        print("\n[SCENARIO 8] Failed reinstall rollback safety...")
-        # Registration must change these clean bytes before activation fails.
+        print("\n[SCENARIO 9] Activation failure restores current runtime and selection...")
         support_neu.write_bytes(f32)
         import stat
         storage_tag = support / ".storage" / "wine_tag.neustorage"
+        storage_state = support / ".storage" / "wine_state.neustorage"
         storage_tag.parent.mkdir(parents=True, exist_ok=True)
-        if not storage_tag.exists():
-            storage_tag.write_text("initial_tag")
-        
+        storage_tag.write_text("same-id-upgrade-pre-failure-tag")
+        storage_state.write_text("preparing")
+
+        persistent_wine_backup = support / "wine.bak"
+        persistent_backup_marker = persistent_wine_backup / "PRIOR_WINE_MARKER.txt"
+        assert persistent_wine_backup.is_dir(), "Persistent Wine backup is missing before activation-failure rollback!"
+        assert persistent_backup_marker.read_text() == "PRIOR_WINE_VERSION_FOR_RESTORE_TEST"
+        persistent_backup_before = {
+            "wine/bin/wine": sha256_file(persistent_wine_backup / "bin/wine"),
+            "wine_tag.neustorage.bak": (support / ".storage" / "wine_tag.neustorage.bak").read_bytes(),
+            "wine_state.neustorage.bak": (support / ".storage" / "wine_state.neustorage.bak").read_bytes(),
+        }
+        active_runtime_before = {
+            relative_path: sha256_file(support / "wine" / relative_path)
+            for relative_path in ["bin/wine", "bin/wineserver"]
+        }
+        assert not (support / "wine" / persistent_backup_marker.name).exists(), \
+            "Current runtime must differ from the old persistent backup for rollback proof!"
         pre_fail_support_sha = sha256(support_neu.read_bytes())
         pre_fail_support_mtime = support_neu.stat().st_mtime
 
-        os.chflags(str(storage_tag), stat.UF_IMMUTABLE)
+        os.chflags(str(storage_state), stat.UF_IMMUTABLE)
         try:
             res = subprocess.run([str(installer_bin), "--install", "--app-path", str(app), "--support-path", str(support)],
                                  capture_output=True, text=True, timeout=120)
-            assert res.returncode != 0, "Installer should fail when storage is immutable!"
-            # Assert support resources exact bytes + mtime restored
-            assert sha256(support_neu.read_bytes()) == pre_fail_support_sha, "Resources bytes not restored after failed install!"
-            assert support_neu.stat().st_mtime == pre_fail_support_mtime, "Resources mtime not restored after failed install!"
-            # Assert helper and backups still usable
-            assert helper_deployed.exists() and os.access(helper_deployed, os.X_OK), "Helper was removed on failed reinstall!"
-            assert (support / ".zzz-wine-registration/backups").is_dir(), "Backups dir was deleted on failed reinstall!"
-            print("  -> PASS: Failed reinstall rollback cleanly restored resources bytes/mtime and preserved helper.")
         finally:
-            os.chflags(str(storage_tag), 0)
+            os.chflags(str(storage_state), 0)
+
+        assert res.returncode != 0, "Installer should fail when activation cannot write wine_state!"
+        assert sha256(support_neu.read_bytes()) == pre_fail_support_sha, \
+            "Resources bytes not restored after activation failure!"
+        assert support_neu.stat().st_mtime == pre_fail_support_mtime, \
+            "Resources mtime not restored after activation failure!"
+        for relative_path, expected_hash in active_runtime_before.items():
+            assert sha256_file(support / "wine" / relative_path) == expected_hash, \
+                f"Activation failure restored a persistent backup instead of current {relative_path}!"
+        assert storage_tag.read_text() == "same-id-upgrade-pre-failure-tag", \
+            "Activation failure did not restore the tag from this attempt!"
+        assert storage_state.read_text() == "preparing", \
+            "Activation failure did not preserve the state from this attempt!"
+        assert persistent_backup_marker.read_text() == "PRIOR_WINE_VERSION_FOR_RESTORE_TEST", \
+            "Activation failure consumed the old persistent Wine backup!"
+        assert sha256_file(persistent_wine_backup / "bin/wine") == persistent_backup_before["wine/bin/wine"], \
+            "Activation failure modified the old persistent Wine backup!"
+        assert (support / ".storage" / "wine_tag.neustorage.bak").read_bytes() == persistent_backup_before["wine_tag.neustorage.bak"], \
+            "Activation failure modified the persistent tag backup!"
+        assert (support / ".storage" / "wine_state.neustorage.bak").read_bytes() == persistent_backup_before["wine_state.neustorage.bak"], \
+            "Activation failure modified the persistent state backup!"
+        assert helper_deployed.exists() and os.access(helper_deployed, os.X_OK), \
+            "Helper was removed on activation failure!"
+        assert (support / ".zzz-wine-registration/backups").is_dir(), \
+            "Registration backups were deleted on activation failure!"
+        print("  -> PASS: Activation fault restored this attempt's runtime/tag/state and retained the old backup.")
 
         # Final app immutability verification
         assert sha256(app_neu.read_bytes()) == app_sha_before
         assert legacy_bak.read_bytes() == legacy_marker
         assert legacy_bak.stat().st_mtime == 500.0
-        print("\n[FINAL VERIFICATION] App bundle and legacy backup remained 100% untouched across all 8 scenarios!")
+        print("\n[FINAL VERIFICATION] App bundle and legacy backup remained 100% untouched across all 9 scenarios!")
 
     print("\n====================================================================")
-    print("ALL 8 RESOURCE LIFECYCLE REGRESSION SCENARIOS PASSED SUCCESSFULLY!")
+    print("ALL 9 RESOURCE LIFECYCLE REGRESSION SCENARIOS PASSED SUCCESSFULLY!")
     print("====================================================================")
 
 def main():
