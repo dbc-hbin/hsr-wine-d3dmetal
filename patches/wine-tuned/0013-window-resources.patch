@@ -149,21 +149,20 @@
 +            __atomic_load_n(&lastEvent->event->deliver, __ATOMIC_RELAXED) == INT_MAX &&
              lastEvent->event->window == event->event->window &&
              lastEvent->event->mouse_moved.drag == event->event->mouse_moved.drag &&
-             !lastEvent->event->mouse_moved.explicit_rawinput &&
-@@ -276,8 +291,10 @@
+             !lastEvent->event->mouse_moved.noncoalescible &&
+@@ -297,8 +312,10 @@
              {
                  [[event retain] autorelease];
                  [events removeObjectAtIndex:index];
--
--                if (event->event->deliver == INT_MAX ||
 +                if (index < cleanupIndex) cleanupIndex--;
 +                else if (cleanupIndex >= [events count]) cleanupIndex = 0;
-+
+ 
+-                if (event->event->deliver == INT_MAX ||
 +                if (__atomic_load_n(&event->event->deliver, __ATOMIC_RELAXED) == INT_MAX ||
                      __atomic_sub_fetch(&event->event->deliver, 1, __ATOMIC_RELAXED) >= 0)
                  {
                      ret = event;
-@@ -306,6 +323,7 @@
+@@ -327,6 +344,7 @@
          }];
  
          [events removeObjectsAtIndexes:indexes];
@@ -171,7 +170,7 @@
  
          [eventsLock unlock];
      }
-@@ -332,10 +350,12 @@
+@@ -353,10 +371,12 @@
          query->done = FALSE;
  
          [self postEvent:event];
@@ -215,9 +214,9 @@
  
  @interface NSWindow (PrivatePreventsActivation)
  
-@@ -309,6 +311,11 @@
- 
+@@ -310,6 +312,11 @@
      - (void) windowDidDrawContent;
+     - (void) postNativeCursorSyncEvent;
  
 +    - (void) queueColorImage:(CGImageRef)image rect:(CGRect)rect dirty:(CGRect)dirty;
 +    - (void) queueShapeImage:(CGImageRef)image;
@@ -227,7 +226,7 @@
  @end
  
  
-@@ -415,10 +422,16 @@
+@@ -416,10 +423,16 @@
          imageRect.size.width *= layer.contentsScale;
          imageRect.size.height *= layer.contentsScale;
  
@@ -249,16 +248,16 @@
          if (image)
          {
 @@ -941,6 +954,9 @@
+                                               defer:YES] autorelease];
  
          if (!window) return nil;
- 
++
 +        window->surfaceUpdateLock = [[NSLock alloc] init];
 +        if (!window->surfaceUpdateLock) return nil;
-+
+ 
          /* Standardize windows to eliminate differences between titled and
             borderless windows and between NSWindow and NSPanel. */
-         [window setHidesOnDeactivate:NO];
-@@ -1008,6 +1024,9 @@
+@@ -1010,6 +1026,9 @@
          [latentChildWindows release];
          [latentParentWindow release];
          [contentViewMaskLayer release];
@@ -268,10 +267,12 @@
          [super dealloc];
      }
  
-@@ -3133,6 +3152,102 @@
+@@ -3160,6 +3179,102 @@
+     - (BOOL) wantsPeriodicDraggingUpdates
+     {
          return NO;
-     }
- 
++    }
++
 +    - (void) queueColorImage:(CGImageRef)image rect:(CGRect)rect dirty:(CGRect)dirty
 +    {
 +        BOOL schedule;
@@ -366,12 +367,10 @@
 +        pendingShapeImage = NULL;
 +        pendingColorUpdate = pendingShapeUpdate = FALSE;
 +        [surfaceUpdateLock unlock];
-+    }
-+
+     }
+ 
  @end
- 
- 
-@@ -3157,6 +3272,16 @@
+@@ -3186,6 +3301,16 @@
      return (macdrv_window)window;
  }
  
@@ -388,7 +387,7 @@
  /***********************************************************************
   *              macdrv_destroy_cocoa_window
   *
-@@ -3170,6 +3295,7 @@
+@@ -3199,6 +3324,7 @@
  
      OnMainThread(^{
          window.closing = TRUE;
@@ -396,15 +395,16 @@
          [window doOrderOut];
          [window close];
      });
-@@ -3344,17 +3470,7 @@
+@@ -3372,18 +3498,8 @@
+ @autoreleasepool
  {
      WineWindow* window = (WineWindow*)w;
- 
+-
 -    CGImageRetain(image);
 -
 -    OnMainThreadAsync(^{
 -        WineContentView *view = [window contentView];
--
+ 
 -        [view setColorImage:image];
 -        [view setSurfaceRect:cgrect_mac_from_win(rect)];
 -        [view setNeedsDisplayInRect:NSRectFromCGRect(cgrect_mac_from_win(dirty))];
@@ -415,7 +415,7 @@
  }
  }
  
-@@ -3368,17 +3484,7 @@
+@@ -3397,17 +3513,7 @@
  {
      WineWindow* window = (WineWindow*)w;
  

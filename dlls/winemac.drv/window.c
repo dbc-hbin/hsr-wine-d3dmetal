@@ -1923,10 +1923,8 @@ void macdrv_window_native_cursor_sync(macdrv_window candidate)
 
     SERVER_START_REQ(set_cursor)
     {
-        req->flags = SET_CURSOR_SYNC_POS;
+        req->flags = SET_CURSOR_OWNER;
         req->win = wine_server_user_handle(context.window);
-        req->x = floor(context.position.x);
-        req->y = floor(context.position.y);
         wine_server_call(req);
     }
     SERVER_END_REQ;

@@ -63,9 +63,11 @@ This build integrates several targeted patches into upstream Wine 11.17 to ensur
 - Dedupes shader compilation and retains compiled PSOs across the device lifetime.
 - Cache warmup ensures smooth combat and scene transitions from the very first run.
 
-### 5. Cursor Rollback & RawInput Fix (`0004-macdrv-reset-rawinput-baseline.patch`)
-- Fixes the bug where the mouse cursor fails to switch to the in-game cursor or mouse input freezes upon launching the game.
-- Reverts macdrv rawinput regressions to a stable baseline for smooth camera rotation and window focus handling.
+### 5. Cursor Ownership & RawInput Separation (`0004-macdrv-reset-rawinput-baseline.patch`)
+- Preserves native cursor display and window routing while making ownership synchronization independent of cursor position.
+- Sends warp-corrected mouse deltas separately from pointer coordinates, preserving fractional motion and event coalescing without dropping the first real movement.
+- The updated source uses server protocol **966**; rebuild matching Wine client/server modules together. The bundled installer/runtime has not been rebuilt with this change.
+- Run `node scripts/wine-mac-cursor-input-regression.mjs` for extracted-production input checks. These do not replace native cursor-pixel or in-game camera verification.
 
 ### 6. Media, Audio, Window & System Resource Tuning (`0005`, `0006`, `0008` ~ `0014`)
 - **Media Playback**: GStreamer and Media Foundation optimizations prevent cutscene stutters.

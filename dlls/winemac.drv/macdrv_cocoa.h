@@ -322,7 +322,6 @@ typedef uint64_t macdrv_event_mask;
 struct macdrv_native_cursor_context
 {
     void *window;
-    CGPoint position;
 };
 
 typedef struct macdrv_event {
@@ -376,7 +375,7 @@ typedef struct macdrv_event {
             int             x;
             int             y;
             bool            drag;
-            bool            explicit_rawinput;
+            bool            noncoalescible;
             int             raw_x;
             int             raw_y;
             unsigned long   time_ms;

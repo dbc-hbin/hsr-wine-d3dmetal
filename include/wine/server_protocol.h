@@ -5814,7 +5814,7 @@ struct set_cursor_reply
 #define SET_CURSOR_CLIP   0x08
 #define SET_CURSOR_NOCLIP 0x10
 #define SET_CURSOR_FSCLIP 0x20
-#define SET_CURSOR_SYNC_POS 0x40
+#define SET_CURSOR_OWNER    0x40
 
 
 struct get_cursor_history_request
@@ -7189,6 +7189,6 @@ union generic_reply
     struct alpc_create_port_reply alpc_create_port_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 965
+#define SERVER_PROTOCOL_VERSION 966
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

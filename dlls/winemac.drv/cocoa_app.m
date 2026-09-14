@@ -1407,8 +1407,8 @@ static NSString* WineLocalizedString(unsigned int stringID)
         {
             CGPoint point = CGEventGetLocation([anEvent CGEvent]);
             macdrv_event* event;
-            BOOL absolute;
-            BOOL explicitRawInput = FALSE;
+            BOOL absolute, noncoalescible;
+            double scale = retina_on ? 2 : 1;
 
             // If we recently warped the cursor (other than in our cursor-clipping
             // event tap), discard mouse move events until we see an event which is
@@ -1420,17 +1420,17 @@ static NSString* WineLocalizedString(unsigned int stringID)
 
                 /* The event tap removes the synthetic center-warp displacement.
                    Keep waiting across that zero-motion event (and across buttons or
-                   wheels, which never enter this path) so the first real post-warp
-                   delta is delivered explicitly to RawInput. */
+                   wheels, which never enter this path) until the first real post-warp
+                   movement. */
                 if (![anEvent deltaX] && ![anEvent deltaY])
                     return;
 
                 lastSetCursorPositionTime = 0;
                 forceNextMouseMoveAbsolute = TRUE;
-                explicitRawInput = TRUE;
             }
 
-            if (forceNextMouseMoveAbsolute || targetWindow != lastTargetWindow)
+            noncoalescible = forceNextMouseMoveAbsolute || targetWindow != lastTargetWindow;
+            if (noncoalescible)
             {
                 absolute = TRUE;
                 forceNextMouseMoveAbsolute = FALSE;
@@ -1492,31 +1492,11 @@ static NSString* WineLocalizedString(unsigned int stringID)
                 event->mouse_moved.x = floor(point.x);
                 event->mouse_moved.y = floor(point.y);
 
-                if (explicitRawInput)
-                {
-                    double scale = retina_on ? 2 : 1;
-
-                    /* Preserve the Event Tap-corrected delta as explicit RawInput. */
-                    /* deltaY is already flipped */
-                    mouseMoveDeltaX += [anEvent deltaX];
-                    mouseMoveDeltaY += [anEvent deltaY];
-                    event->mouse_moved.raw_x = mouseMoveDeltaX * scale;
-                    event->mouse_moved.raw_y = mouseMoveDeltaY * scale;
-
-                    /* Keep the remainder after integer truncation. */
-                    mouseMoveDeltaX -= event->mouse_moved.raw_x / scale;
-                    mouseMoveDeltaY -= event->mouse_moved.raw_y / scale;
-                }
-                else
-                {
-                    mouseMoveDeltaX = 0;
-                    mouseMoveDeltaY = 0;
-                }
+                mouseMoveDeltaX = 0;
+                mouseMoveDeltaY = 0;
             }
             else
             {
-                double scale = retina_on ? 2 : 1;
-
                 /* Add event delta to accumulated delta error */
                 /* deltaY is already flipped */
                 mouseMoveDeltaX += [anEvent deltaX];
@@ -1531,11 +1511,24 @@ static NSString* WineLocalizedString(unsigned int stringID)
                 mouseMoveDeltaY -= event->mouse_moved.y / scale;
             }
 
-            if (event->type == MOUSE_MOVED_ABSOLUTE || event->mouse_moved.x || event->mouse_moved.y)
+            /* Preserve every physical Cocoa delta for RawInput independently of
+               the legacy absolute/relative baseline.  The event tap has already
+               corrected post-warp deltas, and deltaY is already flipped. */
+            rawMouseMoveDeltaX += [anEvent deltaX];
+            rawMouseMoveDeltaY += [anEvent deltaY];
+            event->mouse_moved.raw_x = rawMouseMoveDeltaX * scale;
+            event->mouse_moved.raw_y = rawMouseMoveDeltaY * scale;
+
+            /* Keep the remainder after integer truncation. */
+            rawMouseMoveDeltaX -= event->mouse_moved.raw_x / scale;
+            rawMouseMoveDeltaY -= event->mouse_moved.raw_y / scale;
+
+            if (event->type == MOUSE_MOVED_ABSOLUTE || event->mouse_moved.x || event->mouse_moved.y ||
+                event->mouse_moved.raw_x || event->mouse_moved.raw_y)
             {
                 event->mouse_moved.time_ms = [self ticksForEventTime:[anEvent timestamp]];
                 event->mouse_moved.drag = drag;
-                event->mouse_moved.explicit_rawinput = explicitRawInput;
+                event->mouse_moved.noncoalescible = noncoalescible;
 
                 [targetWindow.queue postEvent:event];
             }
@@ -2666,7 +2659,6 @@ bool macdrv_get_native_cursor_context(struct macdrv_native_cursor_context *conte
     __block bool ret = false;
 
     OnMainThread(^{
-        WineApplicationController *controller = [WineApplicationController sharedController];
         NSPoint point = [NSEvent mouseLocation];
         NSInteger number;
         WineWindow *window;
@@ -2696,8 +2688,6 @@ bool macdrv_get_native_cursor_context(struct macdrv_native_cursor_context *conte
             return;
 
         context->window = macdrv_get_window_hwnd((macdrv_window)window);
-        point = [controller flippedMouseLocation:point];
-        context->position = cgpoint_win_from_mac(NSPointToCGPoint(point));
         ret = true;
     });
 

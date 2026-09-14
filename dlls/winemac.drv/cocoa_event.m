@@ -228,22 +228,43 @@ static const OSType WineHotKeySignature = 'Wine';
             __atomic_load_n(&lastEvent->event->deliver, __ATOMIC_RELAXED) == INT_MAX &&
             lastEvent->event->window == event->event->window &&
             lastEvent->event->mouse_moved.drag == event->event->mouse_moved.drag &&
-            !lastEvent->event->mouse_moved.explicit_rawinput &&
-            !event->event->mouse_moved.explicit_rawinput)
+            !lastEvent->event->mouse_moved.noncoalescible &&
+            !event->event->mouse_moved.noncoalescible)
         {
+            int x, y, raw_x, raw_y;
+            BOOL merged;
+
+            merged = !__builtin_add_overflow(lastEvent->event->mouse_moved.raw_x,
+                                              event->event->mouse_moved.raw_x, &raw_x) &&
+                     !__builtin_add_overflow(lastEvent->event->mouse_moved.raw_y,
+                                              event->event->mouse_moved.raw_y, &raw_y);
             if (event->event->type == MOUSE_MOVED_RELATIVE)
+                merged = merged &&
+                         !__builtin_add_overflow(lastEvent->event->mouse_moved.x,
+                                                 event->event->mouse_moved.x, &x) &&
+                         !__builtin_add_overflow(lastEvent->event->mouse_moved.y,
+                                                 event->event->mouse_moved.y, &y);
+
+            if (merged)
             {
-                lastEvent->event->mouse_moved.x += event->event->mouse_moved.x;
-                lastEvent->event->mouse_moved.y += event->event->mouse_moved.y;
+                if (event->event->type == MOUSE_MOVED_RELATIVE)
+                {
+                    lastEvent->event->mouse_moved.x = x;
+                    lastEvent->event->mouse_moved.y = y;
+                }
+                else
+                {
+                    lastEvent->event->type = MOUSE_MOVED_ABSOLUTE;
+                    lastEvent->event->mouse_moved.x = event->event->mouse_moved.x;
+                    lastEvent->event->mouse_moved.y = event->event->mouse_moved.y;
+                }
+
+                lastEvent->event->mouse_moved.raw_x = raw_x;
+                lastEvent->event->mouse_moved.raw_y = raw_y;
+                lastEvent->event->mouse_moved.time_ms = event->event->mouse_moved.time_ms;
             }
             else
-            {
-                lastEvent->event->type = MOUSE_MOVED_ABSOLUTE;
-                lastEvent->event->mouse_moved.x = event->event->mouse_moved.x;
-                lastEvent->event->mouse_moved.y = event->event->mouse_moved.y;
-            }
-
-            lastEvent->event->mouse_moved.time_ms = event->event->mouse_moved.time_ms;
+                [events addObject:event];
         }
         else
             [events addObject:event];

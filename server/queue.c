@@ -521,7 +521,7 @@ static int update_desktop_cursor_window( struct desktop *desktop, user_handle_t 
     return updated;
 }
 
-static int update_desktop_cursor_pos( struct desktop *desktop, user_handle_t win, int x, int y, int authoritative )
+static int update_desktop_cursor_pos( struct desktop *desktop, user_handle_t win, int x, int y )
 {
     desktop_shm_t *desktop_shm = desktop->shared;
     int updated;
@@ -539,9 +539,9 @@ static int update_desktop_cursor_pos( struct desktop *desktop, user_handle_t win
     }
     SHARED_WRITE_END;
 
-    if (!authoritative && (!win || !is_window_visible( win ) || is_window_transparent( win )))
+    if (!win || !is_window_visible( win ) || is_window_transparent( win ))
         win = shallow_window_from_point( desktop, x, y );
-    if (update_desktop_cursor_window( desktop, win, authoritative )) updated = 1;
+    if (update_desktop_cursor_window( desktop, win, 0 )) updated = 1;
 
     return updated;
 }
@@ -566,7 +566,7 @@ static void set_cursor_pos( struct desktop *desktop, int x, int y )
 
     if ((device = current->process->rawinput_mouse) && (device->flags & RIDEV_NOLEGACY))
     {
-        update_desktop_cursor_pos( desktop, 0, x, y, 0 );
+        update_desktop_cursor_pos( desktop, 0, x, y );
         return;
     }
 
@@ -1855,7 +1855,7 @@ static void queue_hardware_message( struct desktop *desktop, struct message *msg
         prepend_cursor_history( msg->x, msg->y, msg->time, msg_data->info );
         /* fallthrough */
     case QS_MOUSEBUTTON:
-        if (update_desktop_cursor_pos( desktop, msg->win, msg->x, msg->y, 0 )) always_queue = 1;
+        if (update_desktop_cursor_pos( desktop, msg->win, msg->x, msg->y )) always_queue = 1;
         if (desktop_shm->keystate[VK_LBUTTON] & 0x80)  msg->wparam |= MK_LBUTTON;
         if (desktop_shm->keystate[VK_MBUTTON] & 0x80)  msg->wparam |= MK_MBUTTON;
         if (desktop_shm->keystate[VK_RBUTTON] & 0x80)  msg->wparam |= MK_RBUTTON;
@@ -4017,7 +4017,7 @@ DECL_HANDLER(set_cursor)
         set_win32_error( ERROR_INVALID_CURSOR_HANDLE );
         return;
     }
-    if ((req->flags & SET_CURSOR_SYNC_POS) && req->win &&
+    if ((req->flags & SET_CURSOR_OWNER) && req->win &&
         !is_native_cursor_window( req->win, desktop, current->process ))
     {
         set_error( STATUS_INVALID_HANDLE );
@@ -4037,8 +4037,8 @@ DECL_HANDLER(set_cursor)
     SHARED_WRITE_END;
 
     if (req->flags & SET_CURSOR_POS) set_cursor_pos( desktop, req->x, req->y );
-    if (req->flags & SET_CURSOR_SYNC_POS)
-        update_desktop_cursor_pos( desktop, req->win, req->x, req->y, 1 );
+    if (req->flags & SET_CURSOR_OWNER)
+        update_desktop_cursor_window( desktop, req->win, 1 );
     if (req->flags & SET_CURSOR_CLIP) set_clip_rectangle( desktop, &req->clip, req->flags, 0 );
     if (req->flags & SET_CURSOR_NOCLIP) set_clip_rectangle( desktop, NULL, SET_CURSOR_NOCLIP, 0 );
 
