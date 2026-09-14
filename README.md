@@ -13,7 +13,7 @@ This HSR runtime uses the game's valid Direct3D 11 path. It does **not** add or 
 
 ## Install and restore
 
-No release asset has been published yet. When a distribution ZIP is provided, extract `HSRWineD3DMetalInstaller.zip`, quit Yaagl HSR OS, and open **HSR Wine D3DMetal Installer.app**. The app installs the bundled `wine-11.17-hsr-gptk4b2-stock.tar.xz`, registers **`Wine 11.17 GPTK4.0b2`**, and preserves the previous Yaagl resources and Wine selection for restoration. Use the installer's Restore action to return to that saved state.
+Download the [`v1.0.0` release](https://github.com/dbc-hbin/hsr-wine-d3dmetal/releases/tag/v1.0.0) [installer ZIP](https://github.com/dbc-hbin/hsr-wine-d3dmetal/releases/download/v1.0.0/HSRWineD3DMetalInstaller.zip), extract `HSRWineD3DMetalInstaller.zip`, quit Yaagl HSR OS, and open **HSR Wine D3DMetal Installer.app**. The app installs the bundled `wine-11.17-hsr-gptk4b2-stock.tar.xz`, registers **`Wine 11.17 GPTK4.0b2`**, and preserves the previous Yaagl resources and Wine selection for restoration. Use the installer's Restore action to return to that saved state.
 
 The app is not notarized or Developer ID signed. macOS may block its first launch; after verifying the downloaded file, use Finder's **Open** context-menu action or Privacy & Security settings to allow it. Do not disable Gatekeeper globally.
 

@@ -13,7 +13,7 @@ HSR에서 유효한 Direct3D 11 경로를 사용합니다. `-use-d3d12`를 추�
 
 ## 설치와 복원
 
-아직 릴리스 파일은 게시되지 않았습니다. 배포 ZIP이 제공되면 `HSRWineD3DMetalInstaller.zip`을 풀고 Yaagl HSR OS를 종료한 뒤 **HSR Wine D3DMetal Installer.app**을 실행합니다. 앱은 포함된 `wine-11.17-hsr-gptk4b2-stock.tar.xz`를 설치하고 **`Wine 11.17 GPTK4.0b2`**를 등록하며, 복원을 위해 이전 Yaagl 리소스와 Wine 선택을 보존합니다. 설치 프로그램의 Restore 기능으로 저장된 상태를 복구할 수 있습니다.
+[`v1.0.0` 릴리스](https://github.com/dbc-hbin/hsr-wine-d3dmetal/releases/tag/v1.0.0)의 [설치 프로그램 ZIP](https://github.com/dbc-hbin/hsr-wine-d3dmetal/releases/download/v1.0.0/HSRWineD3DMetalInstaller.zip)을 다운로드하고 `HSRWineD3DMetalInstaller.zip`을 푼 뒤, Yaagl HSR OS를 종료하고 **HSR Wine D3DMetal Installer.app**을 실행합니다. 앱은 포함된 `wine-11.17-hsr-gptk4b2-stock.tar.xz`를 설치하고 **`Wine 11.17 GPTK4.0b2`**를 등록하며, 복원을 위해 이전 Yaagl 리소스와 Wine 선택을 보존합니다. 설치 프로그램의 Restore 기능으로 저장된 상태를 복구할 수 있습니다.
 
 앱은 공증되거나 Developer ID로 서명되지 않았으므로 macOS가 최초 실행을 차단할 수 있습니다. 다운로드 파일을 확인한 뒤 Finder에서 우클릭하여 **열기**를 선택하거나 개인정보 보호 및 보안 설정에서 허용하십시오. Gatekeeper를 전역으로 끄지 마십시오.
 
