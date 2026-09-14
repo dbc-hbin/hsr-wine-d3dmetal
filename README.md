@@ -30,6 +30,12 @@ The included archive remains in Yaagl's local runtime storage, so you can select
 
 **The same Wine name and ID can be reinstalled.** The new installer's bundled archive replaces both the cached archive and the Wine directory; an identical name is not treated as proof that the installed files are current. Replacement does not leave obsolete files behind. If final Wine-selection activation fails, the runtime and selection from immediately before this attempt are restored, while the original restore backup remains intact. Update means **replace with the build bundled in the installer being run**, not an automatic online search for the latest Wine.
 
+### Separate packages for upstream Yaagl
+
+The integration in [Yaagl PR #759](https://github.com/yaagl/yet-another-anime-game-launcher/pull/759) uses two v1.0.5 assets: `wine-11.17-zzz-core-macos26.tar.xz` (root `wine/`) and `d3dmetal-gptk4b2-zzz-v1.0.5.tar.xz` (a relative `lib/` overlay). Yaagl downloads and caches the backend separately and installs it into the extracted Wine directory before Wine initialization. These are a matched pair, not an arbitrary Wine/backend compatibility guarantee. The existing all-in-one archive and GUI installer are unchanged.
+
+Reproduce the split from the verified staged runtime with `bash scripts/package-wine-runtime-split.sh`. The script preserves compiled bytes, permissions, and symlinks, verifies reassembly and signatures, and exercises Wine initialization in a temporary prefix. In the upstream integration, ZZZ has an optional DirectX 12 setting, off by default; it is enabled only for a distribution declaring `supportsD3d12`.
+
 ### v1.0.5: rebuilt cursor/RawInput runtime and same-name upgrades
 
 - The bundled Wine now includes `db45a95`: cursor ownership synchronization no longer changes pointer coordinates, and corrected RawInput deltas travel independently. Matching Wine client/server modules were rebuilt together for server protocol **966**.
