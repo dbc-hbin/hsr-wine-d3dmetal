@@ -26,6 +26,8 @@ case "$WINE_BUILD_PROFILE" in
     exit 2
     ;;
 esac
+PROVENANCE_NAME=${WINE_PACKAGE_NAME:-$PROVENANCE_NAME}
+RUNTIME_ID=${WINE_RUNTIME_ID:-$RUNTIME_ID}
 SOURCE_DIR="$ROOT/source"
 BUILD_X64="$ROOT/build-x64"
 BUILD_ARM64="$ROOT/build-arm64"
@@ -36,7 +38,7 @@ CONFIG_X64_STATE_FILE="$ROOT/configure-x64.state.json"
 CONFIG_ARM64_STATE_FILE="$ROOT/configure-arm64.state.json"
 PROVENANCE_FILE="$ROOT/provenance.json"
 ROOT_REL=${ROOT#"$REPO_DIR/"}
-BASE_ROOT="$REPO_DIR/build/wine-p3"
+BASE_ROOT=${WINE_P3_ROOT:-"$REPO_DIR/build/wine-p3"}
 BASE_SOURCE="$BASE_ROOT/source"
 BASE_HOST="$BASE_ROOT/host"
 BASE_PROVENANCE="$BASE_ROOT/provenance.json"
@@ -143,6 +145,9 @@ Actions:
   all        prepare + configure + build + install
 
 Profile: selected by WINE_BUILD_PROFILE (tuned or safe-msync; default tuned).
+Environment: WINE_P3_ROOT selects prepared baseline inputs (default build/wine-p3).
+MACOSX_DEPLOYMENT_TARGET defaults to 26.0; SDKROOT selects the installed SDK.
+WINE_PACKAGE_NAME and WINE_RUNTIME_ID override the profile package metadata.
 The driver never writes build/wine-p3. It intentionally does not perform a full
 Wine rebuild: unchanged PE and Unix files are inherited byte-for-byte from
 build/wine-p3/host. Changed x86_64/i386 PE DLLs use the existing x86_64 WoW64
@@ -545,8 +550,8 @@ setup_x64_env() {
   . "$BASE_DEPS_ENV"
   export SDKROOT="${SDKROOT:-$(/usr/bin/xcrun --sdk macosx --show-sdk-path)}"
   export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-  export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
   export PATH="/opt/homebrew/opt/bison/bin:$MINGW_ROOT/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-26.0}"
   DEP_PREFIX="$BASE_ROOT/deps/macports/opt/local"
   if [ -d "$BASE_ROOT/deps/gstreamer/sdk/GStreamer.framework/Versions/1.0" ]; then
     GSTREAMER_ROOT="$BASE_ROOT/deps/gstreamer/sdk/GStreamer.framework/Versions/1.0"
@@ -565,10 +570,11 @@ setup_x64_env() {
   unset PKG_CONFIG_SYSROOT_DIR 2>/dev/null || true
   export CC="/usr/bin/clang -arch x86_64"
   export CXX="/usr/bin/clang++ -arch x86_64"
-  export CFLAGS="${CFLAGS:--O2 -g}"
+  export CFLAGS="${CFLAGS:--O2 -g} -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
+  export CXXFLAGS="${CXXFLAGS:--O2 -g} -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
   export CROSSCFLAGS="${CROSSCFLAGS:--O2}"
   export CPPFLAGS="-I$DEP_PREFIX/include ${CPPFLAGS:-}"
-  export LDFLAGS="-Wl,-headerpad_max_install_names -L$DEP_PREFIX/lib ${LDFLAGS:-}"
+  export LDFLAGS="-Wl,-headerpad_max_install_names -L$DEP_PREFIX/lib ${LDFLAGS:-} -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
   if "$PKG_CONFIG_BIN" --exists gstreamer-1.0 gstreamer-video-1.0; then
     export GSTREAMER_CFLAGS="${GSTREAMER_CFLAGS:-$($PKG_CONFIG_BIN --cflags gstreamer-1.0 gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-tag-1.0)}"
     export GSTREAMER_LIBS="${GSTREAMER_LIBS:-$($PKG_CONFIG_BIN --libs gstreamer-1.0 gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-tag-1.0)}"
@@ -584,13 +590,13 @@ setup_arm64_env() {
   export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
   export SDKROOT="${SDKROOT:-$(/usr/bin/xcrun --sdk macosx --show-sdk-path)}"
   export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-  export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
   export CC="/usr/bin/clang -arch arm64"
+  export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-26.0}"
   export CXX="/usr/bin/clang++ -arch arm64"
-  export CFLAGS="-O2 -g -DWINE_TUNED_X86_SERVER"
-  export CXXFLAGS="-O2 -g -DWINE_TUNED_X86_SERVER"
+  export CFLAGS="-O2 -g -DWINE_TUNED_X86_SERVER -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
+  export CXXFLAGS="-O2 -g -DWINE_TUNED_X86_SERVER -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
   export CPPFLAGS=
-  export LDFLAGS="-Wl,-headerpad_max_install_names"
+  export LDFLAGS="-Wl,-headerpad_max_install_names -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
   export PKG_CONFIG=/usr/bin/false
   export PKG_CONFIG_PATH=
   export PKG_CONFIG_LIBDIR=

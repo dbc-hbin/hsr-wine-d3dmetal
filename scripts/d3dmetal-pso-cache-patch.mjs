@@ -10,7 +10,7 @@ import {
 } from "./d3dmetal-stage-lock-patch.mjs";
 
 const layoutText = await readFile(
-  new URL("../native/d3dmetal-pso-cache/layout.json", import.meta.url),
+  new URL("../d3dmetal-pso-cache/layout.json", import.meta.url),
   "utf8"
 );
 const layoutSha256 = createHash("sha256").update(layoutText).digest("hex");

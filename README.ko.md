@@ -6,6 +6,10 @@ macOS(Apple Silicon) 환경의 **Yaagl ZZZ OS**에서 **젠레스 존 제로(Zen
 
 설치 프로그램은 포함된 사전 빌드 Wine 패키지를 설치하고 Yaagl Wine 메뉴에 **`Wine 11.17 ZZZ DX12 (GPTK4.0b2)`**를 등록합니다.
 
+**배포 타깃은 Apple Silicon의 macOS 26.0 이상이며 Rosetta 2가 필요합니다.** v1.0.2는 새 빌드 디렉터리에서 Wine 산출물 45개를 재빌드했습니다. 그중 네이티브 모듈 7개는 SDK 26.5로 macOS 26.0을 타깃으로 빌드했으며, 나머지 Wine 파일은 고정된 P3 패키지를 계승합니다. Tuned 패치, 네이티브 PSO 캐시, `D3DM_MTL4=1`은 유지됩니다.
+
+`libdxccontainer.dylib`는 D3DMetal의 DXIL 컨테이너 분석과 DXBC/HLSL 변환에 필요합니다. 기록된 최소 버전 26.4를 포함해 Apple 원본 바이너리를 그대로 유지했으며, 조사한 import에서 26.4 전용 API는 발견되지 않았습니다. Wine 설정 배치와 DX12 그래픽·컴퓨트·레이 트레이싱 GPU 읽기 검증은 macOS 27에서 통과했습니다. **macOS 26 실기기 실행은 아직 검증하지 않았습니다.**
+
 ---
 
 ## ⚡ 빠른 시작 (GUI 간편 설치)
@@ -99,22 +103,35 @@ zzz-wine-d3dmetal-dx12/
 ## 🛠️ 소스 코드 직접 빌드하기
 
 ### 요구 환경
-- macOS Sonoma (14.0) 이상 (Apple Silicon M1/M2/M3/M4/M5)
+- macOS 26.0 이상 (Apple Silicon M1/M2/M3/M4/M5), Rosetta 2, macOS 26 SDK
 - Xcode Command Line Tools (`xcode-select --install`)
 - LLVM MinGW 크로스 컴파일러 (`/opt/llvm-mingw-...`)
 - Bison, Pkg-config, GStreamer 의존성
+- 준비된 P3 소스·호스트·의존성 트리·provenance, 로컬 GPTK 오버레이 및 Steam helper 파일. 이 저장소는 외부 빌드 입력을 다운로드하지 않습니다.
 
 ### 빌드 명령어
 ```bash
-# 1. 네이티브 PSO 캐시 dylib 컴파일
-node scripts/build-d3dmetal-pso-cache.mjs build/native-pso-cache
+# 검증된 로컬 입력 디렉터리와 설치된 SDK 경로를 지정합니다.
+export WINE_P3_ROOT="/absolute/path/to/prepared/wine-p3"
+export YAAGL_STEAM_HELPER_DIR="/absolute/path/to/protonextras"
+export GPTK_SOURCE="/absolute/path/to/gptk-overlay/wine"
+export MACOSX_DEPLOYMENT_TARGET=26.0
+export SDKROOT="/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+export WINE_PACKAGE_NAME=wine-11.17-zzz-dx12-gptk4b2-macos26
+export WINE_RUNTIME_ID=11.17-zzz-dx12-tuned-stage-parallel-cache-warmup-cursor-rollback-gptk4b2-arm64server
 
-# 2. Wine 11.17 소스 빌드 (x86_64 WoW64 + ARM64 wineserver)
+# 1. 새 build/wine-tuned 디렉터리에서 Wine 오버레이를 빌드합니다.
 ./scripts/build-wine-tuned.sh all
+
+# 2. 네이티브 PSO 모듈을 빌드하고 런타임 의존성을 패키징합니다.
+./scripts/package-wine-p3-runtime.sh build/wine-tuned/host "$GPTK_SOURCE" \
+  build/wine-tuned/provenance.json build/wine-tuned/package
 
 # 3. GUI 설치 관리자 컴파일
 ./installer/build.sh
 ```
+
+설치 앱 빌드에는 새 `build/wine-tuned/package/wine-11.17-zzz-dx12-gptk4b2-macos26.tar.xz` 아카이브 또는 명시적인 `RUNTIME_ARCHIVE_SOURCE`가 필요합니다. 기존에 설치된 오래된 런타임을 대신 포함하지 않습니다.
 
 ---
 

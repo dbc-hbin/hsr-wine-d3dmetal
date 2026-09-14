@@ -6,6 +6,10 @@ Optimized Wine 11.17 runtime source code and easy 1-click GUI installer for play
 
 The installer installs the included prebuilt Wine package and registers **`Wine 11.17 ZZZ DX12 (GPTK4.0b2)`** in Yaagl's Wine menu.
 
+**Deployment target: macOS 26.0 or later on Apple Silicon, with Rosetta 2.** v1.0.2 rebuilds 45 Wine artifacts from fresh build directories; the seven rebuilt native modules target macOS 26.0 using SDK 26.5. The remaining Wine files are inherited from the pinned P3 package. Tuned patches, native PSO caching, and `D3DM_MTL4=1` are unchanged.
+
+`libdxccontainer.dylib` is required by D3DMetal for DXIL container parsing and DXBC/HLSL conversion. Its original Apple binary is retained byte-for-byte, including its recorded minimum version of 26.4; no 26.4-only imported API was identified. The Wine configuration batch and DX12 graphics/compute/ray-tracing GPU readbacks passed on macOS 27. **Execution on macOS 26 hardware has not yet been verified.**
+
 ---
 
 ## ⚡ Quick Start (Easy 1-Click GUI Installer)
@@ -99,22 +103,35 @@ zzz-wine-d3dmetal-dx12/
 ## 🛠️ Building From Source
 
 ### Prerequisites
-- macOS Sonoma (14.0) or later (Apple Silicon M-series)
+- macOS 26.0 or later (Apple Silicon M-series), Rosetta 2, and a macOS 26 SDK
 - Xcode Command Line Tools (`xcode-select --install`)
 - LLVM MinGW toolchain (`/opt/llvm-mingw-...`)
 - Bison, Pkg-config, GStreamer dependencies
+- Prepared P3 source, host, dependency tree and provenance; a local GPTK overlay and Steam helper payload. These external build inputs are not downloaded by this repository.
 
 ### Build Commands
 ```bash
-# 1. Compile native PSO cache dylib
-node scripts/build-d3dmetal-pso-cache.mjs build/native-pso-cache
+# Set these to your existing, verified local input directories.
+export WINE_P3_ROOT="/absolute/path/to/prepared/wine-p3"
+export YAAGL_STEAM_HELPER_DIR="/absolute/path/to/protonextras"
+export GPTK_SOURCE="/absolute/path/to/gptk-overlay/wine"
+export MACOSX_DEPLOYMENT_TARGET=26.0
+export SDKROOT="/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+export WINE_PACKAGE_NAME=wine-11.17-zzz-dx12-gptk4b2-macos26
+export WINE_RUNTIME_ID=11.17-zzz-dx12-tuned-stage-parallel-cache-warmup-cursor-rollback-gptk4b2-arm64server
 
-# 2. Build Wine 11.17 (x86_64 WoW64 + ARM64 native wineserver)
+# 1. Build the Wine overlay in fresh build/wine-tuned directories.
 ./scripts/build-wine-tuned.sh all
+
+# 2. Build the native PSO module and package all runtime dependencies.
+./scripts/package-wine-p3-runtime.sh build/wine-tuned/host "$GPTK_SOURCE" \
+  build/wine-tuned/provenance.json build/wine-tuned/package
 
 # 3. Build GUI Installer
 ./installer/build.sh
 ```
+
+The installer build requires the new `build/wine-tuned/package/wine-11.17-zzz-dx12-gptk4b2-macos26.tar.xz` archive (or an explicit `RUNTIME_ARCHIVE_SOURCE`). It does not silently bundle an older installed runtime.
 
 ---
 

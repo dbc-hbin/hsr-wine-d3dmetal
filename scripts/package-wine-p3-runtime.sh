@@ -86,8 +86,9 @@ lib/wine/i386-windows/winhttp.dll|i386|pe
 lib/wine/x86_64-windows/ws2_32.dll|x86_64|pe
 lib/wine/i386-windows/ws2_32.dll|i386|pe'
 
-macports_deps_root="$repo_dir/build/wine-p3/deps/macports"
-gstreamer_deps_root="$repo_dir/build/wine-p3/deps/gstreamer"
+baseline_root=${WINE_P3_ROOT:-"$repo_dir/build/wine-p3"}
+macports_deps_root="$baseline_root/deps/macports"
+gstreamer_deps_root="$baseline_root/deps/gstreamer"
 default_output_dir="$repo_dir/build/wine-p3/package"
 
 usage() {
@@ -101,6 +102,7 @@ Positional arguments only:
   OUTPUT_DIR       package output dir (contracts default: build/wine-p3/package)
 
 Environment:
+  WINE_P3_ROOT           prepared baseline dependencies (default: build/wine-p3)
   YAAGL_STEAM_HELPER_DIR  helper payload source (default: sidecar/protonextras)
 
 Archive: <OUTPUT_DIR>/<provenance.name>.tar.xz
@@ -1382,7 +1384,7 @@ if [ -e "$stage/wine/bin/wine.real" ]; then
   die "host prefix already contains wine.real; refusing ambiguous wrapper layout"
 fi
 mv "$stage/wine/bin/wine" "$stage/wine/bin/wine.real"
-cp "$repo_dir/sidecar/local-wine/wine-launch-wrapper.sh" "$stage/wine/bin/wine"
+cp "$repo_dir/scripts/wine-launch-wrapper.sh" "$stage/wine/bin/wine"
 chmod 755 "$stage/wine/bin/wine" "$stage/wine/bin/wine.real"
 
 rm -f "$stage/wine/yaagl-wine-runtime.json" \

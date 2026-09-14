@@ -4,13 +4,20 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
+RUNTIME_ARCHIVE="Wine 11.17 ZZZ DX12 (GPTK4.0b2 macOS26).tar.xz"
+RUNTIME_ARCHIVE_SOURCE="${RUNTIME_ARCHIVE_SOURCE:-$DIR/../build/wine-tuned/package/wine-11.17-zzz-dx12-gptk4b2-macos26.tar.xz}"
+if [ ! -f "$RUNTIME_ARCHIVE_SOURCE" ]; then
+    echo "Missing macOS 26 runtime archive: $RUNTIME_ARCHIVE_SOURCE" >&2
+    exit 1
+fi
+
 echo "==> Compiling Swift installer..."
 ARCH="$(uname -m)"
 OUTPUT_BIN="zzz-wine-installer"
 APP_NAME="ZZZ Wine DX12 Installer.app"
 
 swiftc -O \
-    -target "${ARCH}-apple-macos14.0" \
+    -target "${ARCH}-apple-macos26.0" \
     -framework SwiftUI \
     -framework AppKit \
     -framework CryptoKit \
@@ -38,18 +45,8 @@ for resource in typescript.js AsarTransform.js TypeScript-LICENSE.txt TypeScript
     cp "$source" "$APP_NAME/Contents/Resources/$resource"
 done
 
-RUNTIME_ARCHIVE="Wine 11.17 ZZZ DX12 (GPTK4.0b2).tar.xz"
-LOCAL_RUNTIME_SOURCE="$HOME/Library/Application Support/Yaagl ZZZ OS/local-runtimes/$RUNTIME_ARCHIVE"
-if [ -f "$LOCAL_RUNTIME_SOURCE" ]; then
-    echo "==> Bundling runtime archive into App Resources (standalone installer)..."
-    cp "$LOCAL_RUNTIME_SOURCE" "$APP_NAME/Contents/Resources/$RUNTIME_ARCHIVE"
-else
-    LEGACY_SOURCE="$HOME/Library/Application Support/Yaagl ZZZ OS/local-runtimes/wine-11.17-git.913e31f-zzz-dx12-tuned-d3dmetal-cache-warmup-cursor-rollback-gptk4b2.tar.xz"
-    if [ -f "$LEGACY_SOURCE" ]; then
-        echo "==> Bundling legacy runtime archive as $RUNTIME_ARCHIVE into App Resources..."
-        cp "$LEGACY_SOURCE" "$APP_NAME/Contents/Resources/$RUNTIME_ARCHIVE"
-    fi
-fi
+echo "==> Bundling macOS 26 runtime archive into App Resources..."
+cp "$RUNTIME_ARCHIVE_SOURCE" "$APP_NAME/Contents/Resources/$RUNTIME_ARCHIVE"
 
 if [ -d "$DIR/../external/D3DMetal.framework" ]; then
     echo "==> Bundling D3DMetal.framework into App Resources..."
@@ -74,11 +71,11 @@ cat << 'PLIST' > "$APP_NAME/Contents/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.1</string>
+    <string>1.0.2</string>
     <key>CFBundleVersion</key>
-    <string>1.0.1</string>
+    <string>1.0.2</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>26.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>

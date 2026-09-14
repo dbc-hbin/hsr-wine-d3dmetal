@@ -13,16 +13,16 @@ if (!output || process.argv.length !== (testControls ? 4 : 3)) {
   throw new Error("usage: node scripts/build-d3dmetal-pso-cache.mjs [--test-controls] <output-dir>");
 }
 const outputDirectory = resolve(output);
-const sourceDirectory = resolve(root, "native/d3dmetal-pso-cache");
+const sourceDirectory = resolve(root, "d3dmetal-pso-cache");
 const sourcePaths = [
-  "native/d3dmetal-pso-cache/cache.hpp", "native/d3dmetal-pso-cache/cache.mm",
-  "native/d3dmetal-pso-cache/function-cache.hpp", "native/d3dmetal-pso-cache/function-cache.mm",
-  "native/d3dmetal-pso-cache/function-hooks.hpp", "native/d3dmetal-pso-cache/function-hooks.mm",
-  "native/d3dmetal-pso-cache/key.hpp", "native/d3dmetal-pso-cache/key.mm",
-  "native/d3dmetal-pso-cache/persistent-cache.hpp", "native/d3dmetal-pso-cache/persistent-cache.mm",
-  "native/d3dmetal-pso-cache/rt-key.hpp", "native/d3dmetal-pso-cache/rt-key.mm",
-  "native/d3dmetal-pso-cache/stage-cache.hpp", "native/d3dmetal-pso-cache/stage-cache.mm",
-  "native/d3dmetal-pso-cache/bridge.mm", "native/d3dmetal-pso-cache/layout.json",
+  "d3dmetal-pso-cache/cache.hpp", "d3dmetal-pso-cache/cache.mm",
+  "d3dmetal-pso-cache/function-cache.hpp", "d3dmetal-pso-cache/function-cache.mm",
+  "d3dmetal-pso-cache/function-hooks.hpp", "d3dmetal-pso-cache/function-hooks.mm",
+  "d3dmetal-pso-cache/key.hpp", "d3dmetal-pso-cache/key.mm",
+  "d3dmetal-pso-cache/persistent-cache.hpp", "d3dmetal-pso-cache/persistent-cache.mm",
+  "d3dmetal-pso-cache/rt-key.hpp", "d3dmetal-pso-cache/rt-key.mm",
+  "d3dmetal-pso-cache/stage-cache.hpp", "d3dmetal-pso-cache/stage-cache.mm",
+  "d3dmetal-pso-cache/bridge.mm", "d3dmetal-pso-cache/layout.json",
   "scripts/build-d3dmetal-pso-cache.mjs", "scripts/d3dmetal-pso-cache-patch.mjs",
   "scripts/d3dmetal-stage-lock-patch.mjs",
 ];

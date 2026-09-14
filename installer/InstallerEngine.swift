@@ -14,9 +14,9 @@ public class InstallerEngine: ObservableObject {
     public static let defaultAppPath = "/Applications/Yaagl ZZZ OS.app"
     public static let defaultSupportPath = ("~/Library/Application Support/Yaagl ZZZ OS" as NSString).expandingTildeInPath
     public static var releaseDownloadUrl: String {
-        let archiveName = RuntimePackage.legacyArchiveName
+        let archiveName = RuntimePackage.releaseArchiveName
         let encoded = archiveName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? archiveName
-        return "https://github.com/dbc-hbin/zzz-wine-d3dmetal-dx12/releases/download/v1.0.0/\(encoded)"
+        return "https://github.com/dbc-hbin/zzz-wine-d3dmetal-dx12/releases/download/v1.0.2/\(encoded)"
     }
 
     @Published public var appPath: String = defaultAppPath
@@ -120,7 +120,7 @@ public class InstallerEngine: ObservableObject {
 
     public func findLocalArchive() -> String? {
         let fileManager = FileManager.default
-        let names = [RuntimePackage.targetArchiveName, RuntimePackage.legacyArchiveName]
+        let names = [RuntimePackage.targetArchiveName, RuntimePackage.releaseArchiveName]
         var candidates: [String] = []
         for name in names {
             candidates.append(((Bundle.main.resourcePath ?? "") as NSString).appendingPathComponent(name))
@@ -135,7 +135,7 @@ public class InstallerEngine: ObservableObject {
 
     private func bundledArchive() -> String? {
         let fileManager = FileManager.default
-        let names = [RuntimePackage.targetArchiveName, RuntimePackage.legacyArchiveName]
+        let names = [RuntimePackage.targetArchiveName, RuntimePackage.releaseArchiveName]
         let candidates = names.flatMap { name in
             [
                 ((Bundle.main.resourcePath ?? "") as NSString).appendingPathComponent(name),
