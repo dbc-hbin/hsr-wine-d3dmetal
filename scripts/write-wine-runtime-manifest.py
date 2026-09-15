@@ -45,6 +45,15 @@ def write_manifest(root_arg, runtime_id, wine_version):
         fail("trusted runtime manifest missing required regular files: " + ", ".join(missing))
 
     manifest = {"schemaVersion": 1, "runtimeId": runtime_id, "wineVersion": wine_version, "entries": entries}
+    profile_path = root / "yaagl-hsr-graphics-profile.json"
+    if profile_path.is_file():
+        try:
+            graphics_profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            fail(f"invalid graphics profile manifest: {error}")
+        if graphics_profile.get("profile") != "zzz-cache-no-fp64" or graphics_profile.get("metalIR") != "official-unmodified-no-fp64":
+            fail("graphics profile does not attest zzz-cache-no-fp64 with official MetalIR")
+        manifest["graphicsProfile"] = graphics_profile
     output = root / manifest_name
     with output.open("w", encoding="utf-8", newline="\n") as stream:
         json.dump(manifest, stream, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

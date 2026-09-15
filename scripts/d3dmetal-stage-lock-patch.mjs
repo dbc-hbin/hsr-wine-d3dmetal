@@ -6,11 +6,11 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const D3DMETAL_STAGE_LOCK_SOURCE_SHA256 =
-  "f8640e6b0974277068821d44bd398dcc0f42cbb730d07f3afad97843e72a6ea3";
+  "f5b56df1b8fe8b364dd9530651a3769c8aed948bd343be3b4510604d503e2bad";
 export const D3DMETAL_STAGE_LOCK_PATCHED_SHA256 =
-  "bc3de4284213d958f8097f842483778b8085c745dabd5bc4253b089910437a19";
+  "40f495987a9f5acce9c602578dbef78d2b3999db90edba10e4192c033b736ec2";
 export const D3DMETAL_STAGE_LOCK_PATCHED_SIGNATURE_NORMALIZED_SHA256 =
-  "eb26bf078f6867b94cf62e3548b20989fff2231ce03e74e3eead00bc6fd82e45";
+  "3c131cb6bb1be650eee997721de08b39f9eafd82be1a2e43cca8874d005489ab";
 export const D3DMETAL_STAGE_LOCK_MACH_UUID =
   "674e662b6b5c3fd99a8af415609d2f6a";
 
@@ -183,6 +183,7 @@ function validateMachO(bytes) {
         throw new Error("unsupported binary: truncated Mach-O sections");
       }
       const segment = {
+        commandOffset: cursor,
         fileOffset: Number(bytes.readBigUInt64LE(cursor + 40)),
         fileSize: Number(bytes.readBigUInt64LE(cursor + 48)),
         maxProtection: bytes.readInt32LE(cursor + 56),
@@ -225,6 +226,7 @@ function validateMachO(bytes) {
         throw new Error("unsupported binary: multiple LC_CODE_SIGNATURE commands");
       }
       codeSignature = {
+        commandOffset: cursor,
         dataOffset: bytes.readUInt32LE(cursor + 8),
         dataSize: bytes.readUInt32LE(cursor + 12),
       };
@@ -282,14 +284,16 @@ function validateMachO(bytes) {
       throw new Error("unsupported binary: code signature overlaps executable section data");
     }
   }
-  return { codeSignature };
+  return { codeSignature, linkEdit };
 }
 
-function signatureNormalizedSha256(bytes, codeSignature) {
+function signatureNormalizedSha256(bytes, codeSignature, linkEdit) {
+  const payload = Buffer.from(bytes.subarray(0, codeSignature.dataOffset));
+  payload.fill(0, linkEdit.commandOffset + 32, linkEdit.commandOffset + 40);
+  payload.fill(0, linkEdit.commandOffset + 48, linkEdit.commandOffset + 56);
   return createHash("sha256")
-    .update(bytes.subarray(0, codeSignature.dataOffset))
-    .update(Buffer.alloc(codeSignature.dataSize))
-    .update(bytes.subarray(codeSignature.dataOffset + codeSignature.dataSize))
+    .update(payload.subarray(0, codeSignature.commandOffset))
+    .update(payload.subarray(codeSignature.commandOffset + 16))
     .digest("hex");
 }
 
@@ -309,7 +313,7 @@ export function inspectD3DMetalStageLockPatch(bytes) {
   }
   const hash = sha256(bytes);
   const normalizedHash = layout
-    ? signatureNormalizedSha256(bytes, layout.codeSignature)
+    ? signatureNormalizedSha256(bytes, layout.codeSignature, layout.linkEdit)
     : undefined;
   const sites = D3DMETAL_STAGE_LOCK_PATCH_SITES.map(site => {
     const value = bytesAt(bytes, site);

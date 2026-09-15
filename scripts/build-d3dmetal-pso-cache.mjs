@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -17,8 +17,10 @@ const sourceDirectory = resolve(root, "d3dmetal-pso-cache");
 const sourcePaths = [
   "d3dmetal-pso-cache/cache.hpp", "d3dmetal-pso-cache/cache.mm",
   "d3dmetal-pso-cache/function-cache.hpp", "d3dmetal-pso-cache/function-cache.mm",
+  "d3dmetal-pso-cache/exposure.hpp", "d3dmetal-pso-cache/exposure.mm",
   "d3dmetal-pso-cache/function-hooks.hpp", "d3dmetal-pso-cache/function-hooks.mm",
   "d3dmetal-pso-cache/key.hpp", "d3dmetal-pso-cache/key.mm",
+  "d3dmetal-pso-cache/ngx-hooks.hpp", "d3dmetal-pso-cache/ngx-hooks.mm",
   "d3dmetal-pso-cache/persistent-cache.hpp", "d3dmetal-pso-cache/persistent-cache.mm",
   "d3dmetal-pso-cache/rt-key.hpp", "d3dmetal-pso-cache/rt-key.mm",
   "d3dmetal-pso-cache/stage-cache.hpp", "d3dmetal-pso-cache/stage-cache.mm",
@@ -37,6 +39,9 @@ const hookNames = [
   "CompileComputeStages", "CompileGraphicsStages",
   "CreateComputeStageKey", "CreateGraphicsStageKey",
   "ExtractFunctions", "LoadGraphicsFunctions",
+  "NgxEvaluateMPL", "NgxEvaluateMTL", "TemporalScaleMPL",
+  "ReplayTemporalScaleMPL", "EncodeTemporalScaleMTL",
+  "LegacyRecordComplete", "MplRecordComplete", "NgxD3D12EvaluateFeature",
 ];
 if (layout.formatVersion !== 4 || layout.hooks.length !== hookNames.length ||
     layout.hooks.some((hook, index) => hook.id !== hookNames[index] || hook.dispatchFieldOffset !== index * 8)) {
@@ -86,9 +91,24 @@ if (compilerLookup.status !== 0) throw new Error(compilerLookup.stderr || "clang
 const compiler = compilerLookup.stdout.trim();
 const compilerVersion = spawnSync(compiler, ["--version"], { encoding: "utf8" });
 if (compilerVersion.status !== 0) throw new Error("unable to identify clang++");
-const sdkLookup = spawnSync("xcrun", ["--sdk", "macosx", "--show-sdk-path"], { encoding: "utf8" });
-if (sdkLookup.status !== 0) throw new Error(sdkLookup.stderr || "macOS SDK unavailable");
-const sdkPath = sdkLookup.stdout.trim();
+const defaultSdkPath = "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk";
+let sdkPath = process.env.WINE_SDKROOT;
+if (!sdkPath) {
+  if (existsSync(defaultSdkPath)) {
+    sdkPath = defaultSdkPath;
+  } else {
+    const sdkLookup = spawnSync("xcrun", ["--sdk", "macosx", "--show-sdk-path"], { encoding: "utf8" });
+    if (sdkLookup.status !== 0) throw new Error(sdkLookup.stderr || "macOS SDK unavailable");
+    sdkPath = sdkLookup.stdout.trim();
+  }
+}
+const sdkVersionLookup = spawnSync(
+  "/usr/libexec/PlistBuddy", ["-c", "Print :Version", resolve(sdkPath, "SDKSettings.plist")], { encoding: "utf8" }
+);
+const sdkVersion = sdkVersionLookup.stdout.trim();
+if (sdkVersionLookup.status !== 0 || !sdkVersion.startsWith("26.")) {
+  throw new Error(`macOS 26.x SDK required for native cache build (got ${sdkVersion || "unknown"} at ${sdkPath})`);
+}
 const modulePath = resolve(outputDirectory, "libYaaglNativePsoCache.dylib");
 const compileArgs = [
   "-arch", "x86_64", "-std=c++20", "-fno-objc-arc", "-fobjc-exceptions",
@@ -97,7 +117,7 @@ const compileArgs = [
   ...(testControls ? ["-DYAAGL_NATIVE_PSO_CACHE_TEST_CONTROLS=1"] : []),
   "-dynamiclib", "-pthread", "-framework", "Foundation", "-framework", "Metal",
   "-I", sourceDirectory, "-I", outputDirectory,
-  ...["cache.mm", "function-cache.mm", "function-hooks.mm", "key.mm", "persistent-cache.mm", "rt-key.mm", "stage-cache.mm", "bridge.mm"].map((file) => resolve(sourceDirectory, file)),
+  ...["cache.mm", "exposure.mm", "function-cache.mm", "function-hooks.mm", "key.mm", "ngx-hooks.mm", "persistent-cache.mm", "rt-key.mm", "stage-cache.mm", "bridge.mm"].map((file) => resolve(sourceDirectory, file)),
   "-Wl,-install_name,@rpath/libYaaglNativePsoCache.dylib", "-o", modulePath,
 ];
 const compiled = spawnSync(compiler, compileArgs, { cwd: root, stdio: "inherit" });
@@ -105,6 +125,16 @@ if (compiled.error) throw compiled.error;
 if (compiled.status !== 0) process.exit(compiled.status ?? 1);
 
 const moduleBytes = readFileSync(modulePath);
+const diagnosticControls = [
+  "YAAGL_METALFX_DIAGNOSTICS",
+  "YAAGL_METALFX_LOG",
+  "YAAGL_METALFX_EXPOSURE_SCALE_FIX",
+];
+for (const control of diagnosticControls) {
+  if (!moduleBytes.includes(Buffer.from(control))) {
+    throw new Error(`native cache is missing production diagnostic control: ${control}`);
+  }
+}
 const environmentControls = [
   "YAAGL_NATIVE_PSO_CACHE_PROBE",
   "YAAGL_NATIVE_PSO_CACHE_PROBE_BYPASS",

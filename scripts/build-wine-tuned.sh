@@ -12,14 +12,14 @@ case "$WINE_BUILD_PROFILE" in
     ROOT="$REPO_DIR/build/wine-tuned"
     PROVENANCE_NAME=wine-11.17-git.913e31f-hsr
     RUNTIME_ID=11.17-hsr-gptk4b2-stock
-    PACKAGE_COMMAND=scripts/package-hsr-stock-runtime.sh
+    PACKAGE_COMMAND=scripts/package-hsr-runtime.sh
     ;;
   safe-msync)
     BUILD_LABEL=build-wine-safe-msync
     ROOT="$REPO_DIR/build/wine-safe-msync"
     PROVENANCE_NAME=wine-11.17-git.913e31f-hsr-safe-msync
     RUNTIME_ID=11.17-p3-safe-msync
-    PACKAGE_COMMAND=scripts/package-hsr-stock-runtime.sh
+    PACKAGE_COMMAND=scripts/package-hsr-runtime.sh
     ;;
   *)
     echo "build-wine-tuned: unknown WINE_BUILD_PROFILE: $WINE_BUILD_PROFILE" >&2

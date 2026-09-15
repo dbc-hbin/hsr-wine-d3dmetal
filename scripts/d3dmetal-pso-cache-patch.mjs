@@ -15,7 +15,7 @@ const layoutText = await readFile(
 );
 const layoutSha256 = createHash("sha256").update(layoutText).digest("hex");
 const expectedLayoutSha256 =
-  "d96b8fcd1838b5f4ddede1bb607b14a4840cca3802b07ad5dd88fb22b09effeb";
+  "cd25d62e5c05c5d9042b43ed515fcb3d55bd1b1eb3ebc9fd9aa699f53d1f9951";
 if (layoutSha256 !== expectedLayoutSha256) {
   throw new Error(
     `layout corruption: expected SHA-256 ${expectedLayoutSha256}, got ${layoutSha256}`
@@ -27,9 +27,9 @@ if (layout.formatVersion !== 4) {
 }
 
 export const D3DMETAL_PSO_CACHE_PATCHED_SHA256 =
-  "08917512b8faee8575dd47d09a96da900580648e803ad1e3b37a2b93fee52eb6";
+  "a470b9b446c71b52bdd0b302be11e62743976642e198b47f052cc420e5f0a008";
 export const D3DMETAL_PSO_CACHE_PATCHED_PAYLOAD_SHA256 =
-  "76bb5260a385c5389760f90849b890ec6dbc99cca4c43506ac13ed844ae0856f";
+  "7fb5901244ff800f3ed41eee4dcc6ef8f02a402d97f667ce83e48c5dcccb2fdc";
 
 const LC_SEGMENT_64 = 0x19;
 const LC_UUID = 0x1b;
@@ -108,6 +108,7 @@ function parseMachO(bytes) {
         throw new Error("unsupported binary: truncated Mach-O sections");
       }
       const segment = {
+        commandOffset: cursor,
         name: segmentName,
         vmAddress: checkedNumber(bytes.readBigUInt64LE(cursor + 24), "segment VM address"),
         vmSize: checkedNumber(bytes.readBigUInt64LE(cursor + 32), "segment VM size"),
@@ -249,15 +250,20 @@ function parseMachO(bytes) {
     commandsSize,
     commandEnd,
     codeSignature,
+    linkEdit,
     dependencies,
   };
 }
 
-function patchPayloadSha256(bytes, codeSignature) {
+function patchPayloadSha256(bytes, codeSignature, linkEdit) {
+  const payload = Buffer.from(bytes.subarray(0, codeSignature.dataOffset));
+  // Ad-hoc signing may resize the signature blob. Mach-O then updates only these
+  // signature-container metadata fields; zero them while hashing all code/data.
+  payload.fill(0, linkEdit.commandOffset + 32, linkEdit.commandOffset + 40);
+  payload.fill(0, linkEdit.commandOffset + 48, linkEdit.commandOffset + 56);
   return createHash("sha256")
-    .update(bytes.subarray(0, codeSignature.commandOffset + 8))
-    .update(bytes.subarray(codeSignature.commandOffset + 16, codeSignature.dataOffset))
-    .update(bytes.subarray(codeSignature.dataOffset + codeSignature.dataSize))
+    .update(payload.subarray(0, codeSignature.commandOffset))
+    .update(payload.subarray(codeSignature.commandOffset + 16))
     .digest("hex");
 }
 
@@ -289,8 +295,17 @@ const patchSites = [
   {
     name: "sidecar-load-command",
     offset: layout.dependency.commandOffset,
-    expectedOriginal: Buffer.alloc(layout.dependency.commandSize),
+    expectedOriginal: Buffer.concat([
+      Buffer.from(layout.dependency.originalCodeSignatureHex, "hex"),
+      Buffer.alloc(layout.dependency.commandSize - 16),
+    ]),
     patched: Buffer.from(layout.dependency.commandHex, "hex"),
+  },
+  {
+    name: "relocated-code-signature-command",
+    offset: layout.dependency.commandOffset + layout.dependency.commandSize,
+    expectedOriginal: Buffer.alloc(12),
+    patched: Buffer.from(layout.dependency.originalCodeSignatureHex, "hex").subarray(0, 12),
   },
   {
     name: "common-section-size",
@@ -361,7 +376,11 @@ for (const hook of layout.hooks) {
       hook.gateOffset < layout.constructorVerification.markerOffset ||
       hook.trampolineOffset < layout.constructorVerification.markerOffset ||
       hook.gateOffset + gate.length > layout.textCave.endOffset ||
-      hook.trampolineOffset + trampoline.length > layout.textCave.endOffset) {
+      hook.trampolineOffset + trampoline.length > layout.textCave.endOffset ||
+      gate[8] !== 0x74 ||
+      hook.gateOffset + 8 + gate.readInt32LE(3) !== layout.dispatch.dataSlotVMAddr ||
+      hook.gateOffset + 17 + gate.readInt32LE(13) !== layout.dispatch.dataSlotVMAddr ||
+      hook.gateOffset + 10 + gate.readInt8(9) !== hook.trampolineOffset) {
     throw new Error(`layout corruption: invalid relocated prologue for ${hook.id}`);
   }
 }
@@ -391,7 +410,14 @@ function siteInspection(bytes) {
 
 function reconstructedStageBytes(bytes) {
   const output = Buffer.from(bytes);
+  const relocatedSignatureOffset =
+    layout.dependency.commandOffset + layout.dependency.commandSize;
+  const currentSignatureCommand = Buffer.from(
+    bytes.subarray(relocatedSignatureOffset, relocatedSignatureOffset + 16)
+  );
   for (const site of patchSites) site.expectedOriginal.copy(output, site.offset);
+  output.fill(0, relocatedSignatureOffset, relocatedSignatureOffset + 16);
+  currentSignatureCommand.copy(output, layout.dependency.commandOffset);
   return output;
 }
 
@@ -413,7 +439,7 @@ export function inspectD3DMetalPsoCachePatch(bytes) {
   }
   const hash = sha256(bytes);
   const payloadHash = mach
-    ? patchPayloadSha256(bytes, mach.codeSignature)
+    ? patchPayloadSha256(bytes, mach.codeSignature, mach.linkEdit)
     : undefined;
   const sites = siteInspection(bytes);
   const states = new Set(sites.map(site => site.state));
@@ -456,8 +482,7 @@ export function inspectD3DMetalPsoCachePatch(bytes) {
     patchedHeader &&
     payloadHash === D3DMETAL_PSO_CACHE_PATCHED_PAYLOAD_SHA256 &&
     (reconstructedStageInspection?.mode === "patched" ||
-      reconstructedStageInspection?.mode === "patched-signed" ||
-      reconstructedStageInspection?.mode === "unknown-or-partial")
+      reconstructedStageInspection?.mode === "patched-signed")
   ) {
     mode = "patched-signed";
   }
@@ -476,7 +501,9 @@ export function inspectD3DMetalPsoCachePatch(bytes) {
 
 export function applyD3DMetalPsoCachePatch(bytes) {
   const inspection = inspectD3DMetalPsoCachePatch(bytes);
-  if (inspection.mode === "patched") return Buffer.from(bytes);
+  if (inspection.mode === "patched" || inspection.mode === "patched-signed") {
+    return Buffer.from(bytes);
+  }
   if (
     inspection.mode !== "original" &&
     inspection.mode !== "stage-patched" &&
@@ -493,6 +520,9 @@ export function applyD3DMetalPsoCachePatch(bytes) {
       : Buffer.from(bytes);
   const output = Buffer.from(stageBytes);
   for (const site of patchSites) site.patched.copy(output, site.offset);
+  Buffer.from(layout.dependency.originalCodeSignatureHex, "hex").subarray(12).copy(
+    output, layout.dependency.commandOffset + layout.dependency.commandSize + 12
+  );
   const outputInspection = inspectD3DMetalPsoCachePatch(output);
   const expectedMode =
     inspection.mode === "stage-patched-signed" ? "patched-signed" : "patched";

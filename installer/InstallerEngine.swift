@@ -386,6 +386,7 @@ public class InstallerEngine: ObservableObject {
 
     private let publishedManagedArchiveSHA256: Set<String> = [
         RuntimePackage.archiveSHA256,
+        "ce27f3d3d8211b3b1f0c1f8655fbfc697510f9e3b294b919d43bded99b8a37c3",
         "2c8ac36924b2e8b96f70dee7d82e109e220690b01d99c9c4843b7afae821e051"
     ]
 

@@ -6,13 +6,20 @@ real_wine="$wrapper_dir/wine.real"
 [ -x "$real_wine" ] || { echo "HSR Wine runtime: missing $real_wine" >&2; exit 126; }
 wine_root=$(CDPATH= cd -- "$wrapper_dir/.." && pwd)
 
-# HSR uses Apple's stock D3DMetal through Direct3D 11. Do not inject DXMT,
-# patched MetalIR/PSO helpers, or a Direct3D 12 launch argument here.
+# Fixed HSR profile: patched D3DMetal stage/PSO cache with official, unmodified
+# MetalIR. HSR remains on its supported D3D11 path; do not add DX12 arguments.
 export CX_ACTIVE_GRAPHICS_BACKEND=d3dmetal
 export WINEMSYNC=1
+export D3DM_MTL4=1
+export D3DM_ENABLE_METALFX=1
+export YAAGL_METALFX_EXPOSURE_SCALE_FIX=1
+export D3DM_SUPPORT_DXR=1
+export D3DM_VENDOR_ID=0x10de
+export D3DM_DEVICE_ID=0x2d05
+export D3DM_DEVICE_DESCRIPTION="NVIDIA GeForce RTX 5060"
+export YAAGL_D3DMETAL_CACHE_WARMUP=1
 export CX_APPLEGPTK_LIBD3DSHARED_PATH="$wine_root/lib/external/libd3dshared.dylib"
 export D3DMETAL_FRAMEWORK_PATH="$wine_root/lib/external/D3DMetal.framework/Versions/A/D3DMetal"
-unset D3DM_MTL4 D3DM_ENABLE_METALFX D3DM_SUPPORT_DXR D3DM_VENDOR_ID D3DM_DEVICE_ID D3DM_DEVICE_DESCRIPTION
 export WINEDLLOVERRIDES=d3d11,dxgi=b
 unset WINEDLLPATH_PREPEND DXMT_CONFIG DXMT_CONFIG_FILE
 unset DXVK_CONFIG_FILE DXVK_STATE_CACHE_PATH VK_ICD_FILENAMES VK_DRIVER_FILES DYLD_INSERT_LIBRARIES

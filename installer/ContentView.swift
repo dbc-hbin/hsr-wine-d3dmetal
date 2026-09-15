@@ -105,7 +105,7 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             FeatureRow(icon: "list.bullet.rectangle", title: "Yaagl Wine Menu Registration", desc: "Adds Wine 11.17 GPTK4.0b2 to Yaagl's Wine menu using the prebuilt archive")
                             FeatureRow(icon: "arrow.uturn.backward.circle", title: "Backup & Restore", desc: "Preserves Yaagl resources, Wine selection, and Wine directory before installation")
-                            FeatureRow(icon: "bolt.fill", title: "Stock D3DMetal (GPTK 4.0b2)", desc: "Apple's stock D3D11 and D3D12 translation through Metal IR")
+                            FeatureRow(icon: "bolt.fill", title: "D3DMetal Cache Profile (GPTK 4.0b2)", desc: "Pipeline/function/stage caches plus NGX/MetalFX exposure hooks; official MetalIR remains unmodified")
                             FeatureRow(icon: "cpu.fill", title: "Apple Silicon Native ARM64 Server", desc: "Native arm64 wineserver eliminates Rosetta translation latency")
                             FeatureRow(icon: "memorychip.fill", title: "High-Performance MSync", desc: "Low-overhead synchronization via Mach semaphores and shared memory")
                             FeatureRow(icon: "cursorarrow.rays", title: "Cursor Rollback & RawInput Fix", desc: "Resolves game cursor switching and focus freezes on initial launch")
