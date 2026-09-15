@@ -9,6 +9,7 @@ public struct InstallStatus {
     public var currentWineTag: String = ""
     public var hasBackup: Bool = false
     public var archiveAvailableLocally: Bool = false
+    public var hasManagedInstallation: Bool = false
 }
 
 public class InstallerEngine: ObservableObject {
@@ -33,7 +34,8 @@ public class InstallerEngine: ObservableObject {
     public func log(_ message: String) {
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
         let formatted = "[\(timestamp)] \(message)"
-        if CommandLine.arguments.contains("--cli") || CommandLine.arguments.contains("--install") {
+        if CommandLine.arguments.contains("--cli") || CommandLine.arguments.contains("--install") ||
+            CommandLine.arguments.contains("--restore") || CommandLine.arguments.contains("--uninstall") {
             print(formatted)
         }
         if Thread.isMainThread {
@@ -55,6 +57,7 @@ public class InstallerEngine: ObservableObject {
         }
         newStatus.hasBackup = backupPaths.contains { fileManager.fileExists(atPath: $0) }
         newStatus.archiveAvailableLocally = findLocalArchive() != nil
+        newStatus.hasManagedInstallation = hasManagedInstallation()
         if Thread.isMainThread {
             status = newStatus
         } else {
@@ -304,6 +307,211 @@ public class InstallerEngine: ObservableObject {
                     self.log("Restore failed: \(error.localizedDescription)")
                     completion(false, error.localizedDescription)
                 }
+            }
+        }
+    }
+
+    public func uninstall(completion: @escaping (Bool, String) -> Void) {
+        isWorking = true
+        progress = 0.0
+        logs.removeAll()
+        log("=== Uninstalling managed HSR Wine runtime ===")
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try self.requireYaaglInstallation()
+                try self.requireNoRunningYaaglProcesses()
+                let message = try self.performUninstall()
+                DispatchQueue.main.async {
+                    self.isWorking = false
+                    self.progress = 1.0
+                    self.currentStep = "Uninstall Complete"
+                    self.refreshStatus()
+                    self.log("=== Managed HSR Wine runtime uninstalled ===")
+                    completion(true, message)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isWorking = false
+                    self.progress = 0.0
+                    self.currentStep = "Uninstall Failed"
+                    self.refreshStatus()
+                    self.log("Uninstall failed: \(error.localizedDescription)")
+                    completion(false, error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private struct RuntimeManifest: Decodable {
+        struct Entry: Decodable {
+            let path: String
+            let type: String
+            let size: Int?
+            let sha256: String?
+        }
+        let schemaVersion: Int
+        let runtimeId: String
+        let entries: [Entry]
+    }
+
+    private enum ActiveRuntimeOwnership {
+        case managed, other, targetTagMismatch
+    }
+
+    private func activeRuntimeOwnership() -> ActiveRuntimeOwnership {
+        let tagPath = (storagePath as NSString).appendingPathComponent("wine_tag.neustorage")
+        let tag = (try? String(contentsOfFile: tagPath, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard tag == RuntimePackage.targetRuntimeId else { return .other }
+        let manifestPath = (winePath as NSString).appendingPathComponent("yaagl-wine-runtime-files.json")
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: manifestPath)),
+              let manifest = try? JSONDecoder().decode(RuntimeManifest.self, from: data),
+              manifest.schemaVersion == 1, manifest.runtimeId == RuntimePackage.targetRuntimeId else {
+            return .targetTagMismatch
+        }
+        let required = ["bin/wine", "bin/wine.real", "bin/wineserver"]
+        for relativePath in required {
+            guard let entry = manifest.entries.first(where: { $0.path == relativePath }),
+                  entry.type == "file", let size = entry.size, let expectedHash = entry.sha256 else {
+                return .targetTagMismatch
+            }
+            let path = (winePath as NSString).appendingPathComponent(relativePath)
+            guard let fileData = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe),
+                  fileData.count == size,
+                  SHA256.hash(data: fileData).map({ String(format: "%02x", $0) }).joined() == expectedHash else {
+                return .targetTagMismatch
+            }
+        }
+        return .managed
+    }
+
+    private let publishedManagedArchiveSHA256: Set<String> = [
+        RuntimePackage.archiveSHA256,
+        "2c8ac36924b2e8b96f70dee7d82e109e220690b01d99c9c4843b7afae821e051"
+    ]
+
+    private func isManagedArchive(at path: String) -> Bool {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) else { return false }
+        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return publishedManagedArchiveSHA256.contains(hash)
+    }
+
+    private func hasManagedInstallation() -> Bool {
+        let manager = FileManager.default
+        if manager.fileExists(atPath: registrationHelperDirectory) { return true }
+        if case .managed = activeRuntimeOwnership() { return true }
+        let archive = (supportPath as NSString).appendingPathComponent("local-runtimes/\(RuntimePackage.targetArchiveName)")
+        return isManagedArchive(at: archive)
+    }
+
+    private func performUninstall() throws -> String {
+        let manager = FileManager.default
+        let ownership = activeRuntimeOwnership()
+        if case .targetTagMismatch = ownership {
+            throw NSError(domain: "Install", code: 60, userInfo: [NSLocalizedDescriptionKey:
+                "The selected Wine tag matches this installer, but the active runtime does not match its trusted manifest. Nothing was removed."])
+        }
+
+        // This must succeed before any runtime, archive, helper, or selection is moved.
+        let managedArchivePath = (supportPath as NSString).appendingPathComponent("local-runtimes/\(RuntimePackage.targetArchiveName)")
+        let resourcePlan = try ResourceRegistration.prepareRestore(resourcePath: supportResourcesPath,
+                                                                   backupDirectory: registrationBackupsDirectory,
+                                                                   archivePath: managedArchivePath)
+        let resourceBefore = try Data(contentsOf: URL(fileURLWithPath: supportResourcesPath))
+        let selectionBefore = try activeWineSelection()
+        let transaction = (supportPath as NSString).appendingPathComponent(".wine-uninstall-\(UUID().uuidString)")
+        try manager.createDirectory(atPath: transaction, withIntermediateDirectories: false)
+        var moved: [(original: String, staged: String)] = []
+        var resourceChanged = false
+        var preservedUnknownArchive = false
+        var shouldRemoveTransaction = true
+        defer { if shouldRemoveTransaction { try? manager.removeItem(atPath: transaction) } }
+
+        func stage(_ path: String, as name: String) throws {
+            guard manager.fileExists(atPath: path) else { return }
+            let staged = (transaction as NSString).appendingPathComponent(name)
+            try manager.moveItem(atPath: path, toPath: staged)
+            moved.append((path, staged))
+        }
+
+        do {
+            resourceChanged = try ResourceRegistration.restore(resourcePath: supportResourcesPath, plan: resourcePlan)
+            try stage(registrationHelperDirectory, as: "registration")
+            let archive = managedArchivePath
+            if manager.fileExists(atPath: archive) {
+                if isManagedArchive(at: archive) {
+                    try stage(archive, as: "archive")
+                } else {
+                    preservedUnknownArchive = true
+                    log("Preserving the target-named runtime archive because its bytes are not owned by this installer.")
+                }
+            }
+
+            if case .managed = ownership {
+                let hasPreviousWine = manager.fileExists(atPath: wineBackupPath)
+                try stage(winePath, as: "managed-wine")
+                if hasPreviousWine {
+                    try manager.moveItem(atPath: wineBackupPath, toPath: winePath)
+                    moved.append((wineBackupPath, winePath))
+                    try restoreSavedSelectionForUninstall()
+                } else {
+                    try restoreActiveWineSelection((tag: nil, state: nil))
+                }
+                for backup in backupPaths.dropFirst() where manager.fileExists(atPath: backup) {
+                    try stage(backup, as: URL(fileURLWithPath: backup).lastPathComponent)
+                }
+            }
+            try ensureSupportMtimeNewerThanApp()
+        } catch {
+            var rollbackFailures: [String] = []
+            do { try restoreActiveWineSelection(selectionBefore) } catch { rollbackFailures.append("selection: \(error.localizedDescription)") }
+            for item in moved.reversed() where manager.fileExists(atPath: item.staged) {
+                do {
+                    guard !manager.fileExists(atPath: item.original) else {
+                        throw NSError(domain: "Install", code: 64, userInfo: [NSLocalizedDescriptionKey:
+                            "Rollback destination is occupied; both recovery copies were preserved."])
+                    }
+                    try manager.moveItem(atPath: item.staged, toPath: item.original)
+                } catch {
+                    rollbackFailures.append("\(item.original) (staged at \(item.staged)): \(error.localizedDescription)")
+                    break
+                }
+            }
+            if resourceChanged {
+                do { try resourceBefore.write(to: URL(fileURLWithPath: supportResourcesPath), options: .atomic) }
+                catch { rollbackFailures.append("resources: \(error.localizedDescription)") }
+            }
+            if !rollbackFailures.isEmpty {
+                shouldRemoveTransaction = false
+                throw NSError(domain: "Install", code: 62, userInfo: [NSLocalizedDescriptionKey:
+                    "Uninstall failed and rollback was incomplete. Recovery data was preserved at \(transaction): \(rollbackFailures.joined(separator: "; "))"])
+            }
+            throw error
+        }
+
+        shouldRemoveTransaction = false
+        do {
+            try manager.removeItem(atPath: transaction)
+        } catch {
+            throw NSError(domain: "Install", code: 63, userInfo: [NSLocalizedDescriptionKey:
+                "Uninstall completed, but staged managed files could not be deleted. They were preserved at \(transaction): \(error.localizedDescription)"])
+        }
+        let archiveNote = preservedUnknownArchive ? " An unknown target-named archive was preserved in local-runtimes." : ""
+        if case .other = ownership {
+            return "Removed this installer's menu registration, helper, and owned runtime archive. The currently selected Wine runtime and previous backup were preserved.\(archiveNote)"
+        }
+        return "Removed the managed HSR Wine runtime and restored Yaagl's previous runtime selection.\(archiveNote)"
+    }
+
+    private func restoreSavedSelectionForUninstall() throws {
+        let manager = FileManager.default
+        for path in [(storagePath as NSString).appendingPathComponent("wine_tag.neustorage"),
+                     (storagePath as NSString).appendingPathComponent("wine_state.neustorage")] {
+            let backup = path + ".bak"
+            if manager.fileExists(atPath: path) { try manager.removeItem(atPath: path) }
+            guard manager.fileExists(atPath: backup) else { continue }
+            let attributes = try manager.attributesOfItem(atPath: backup)
+            if (attributes[.size] as? NSNumber)?.intValue != 0 {
+                try manager.copyItem(atPath: backup, toPath: path)
             }
         }
     }
@@ -720,7 +928,10 @@ public class InstallerEngine: ObservableObject {
         let fileManager = FileManager.default
 
         log("Restoring Yaagl support resources.neu configuration...")
-        let restored = try ResourceRegistration.restore(resourcePath: supportResourcesPath, backupDirectory: registrationBackupsDirectory)
+        let archive = (supportPath as NSString).appendingPathComponent("local-runtimes/\(RuntimePackage.targetArchiveName)")
+        let restored = try ResourceRegistration.restore(resourcePath: supportResourcesPath,
+                                                        backupDirectory: registrationBackupsDirectory,
+                                                        archivePath: archive)
         if restored {
             log("Restored Yaagl support resources.neu from registration backup.")
         } else {

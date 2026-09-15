@@ -10,6 +10,7 @@ if [ ! -f "$RUNTIME_ARCHIVE_SOURCE" ]; then
     echo "Missing macOS 26 runtime archive: $RUNTIME_ARCHIVE_SOURCE" >&2
     exit 1
 fi
+/usr/bin/python3 "$DIR/../scripts/validate-runtime-deployment-target.py" "$RUNTIME_ARCHIVE_SOURCE" --maximum 26.0
 
 ARCHIVE_SHA256="$(/usr/bin/shasum -a 256 "$RUNTIME_ARCHIVE_SOURCE" | /usr/bin/cut -d ' ' -f 1)"
 GENERATED_RUNTIME_PACKAGE="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/hsr-runtime-package.XXXXXX.swift")"
@@ -81,9 +82,9 @@ cat << 'PLIST' > "$APP_NAME/Contents/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>1.0.1</string>
     <key>CFBundleVersion</key>
-    <string>1.0.0</string>
+    <string>1.0.1</string>
     <key>LSMinimumSystemVersion</key>
     <string>26.0</string>
     <key>NSHighResolutionCapable</key>

@@ -5,6 +5,7 @@ struct ContentView: View {
     @State private var showingAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
+    @State private var confirmingUninstall = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -86,7 +87,7 @@ struct ContentView: View {
                                 HStack {
                                     Image(systemName: "exclamationmark.triangle.fill")
                                         .foregroundColor(.orange)
-                                    Text("Quit Yaagl and Wine before installing or restoring.")
+                                    Text("Quit Yaagl and Wine before installing, restoring, or uninstalling.")
                                         .font(.callout)
                                         .foregroundColor(.orange)
                                     Spacer()
@@ -178,6 +179,13 @@ struct ContentView: View {
                     .disabled(engine.isWorking || engine.status.yaaglIsRunning)
                 }
 
+                Button("Uninstall Wine", role: .destructive) {
+                    confirmingUninstall = true
+                    showingAlert = true
+                }
+                .disabled(engine.isWorking || engine.status.yaaglIsRunning || !engine.status.hasManagedInstallation)
+                .accessibilityHint("Removes only the installer-managed Wine, menu registration, and cached archive")
+
                 Spacer()
 
                 Button(action: {
@@ -189,13 +197,14 @@ struct ContentView: View {
                 }) {
                     HStack {
                         Image(systemName: engine.status.currentWineTag == RuntimePackage.targetRuntimeId ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.down.circle.fill")
-                        Text(engine.status.currentWineTag == RuntimePackage.targetRuntimeId ? "Reinstall / Update \(RuntimePackage.targetDisplayName)" : "Install \(RuntimePackage.targetDisplayName)")
+                        Text(engine.status.currentWineTag == RuntimePackage.targetRuntimeId ? "Reinstall / Update Wine" : "Install Wine")
                             .fontWeight(.semibold)
                     }
                     .padding(.horizontal, 8)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .accessibilityLabel(engine.status.currentWineTag == RuntimePackage.targetRuntimeId ? "Reinstall or update \(RuntimePackage.targetDisplayName)" : "Install \(RuntimePackage.targetDisplayName)")
                 .disabled(engine.isWorking || engine.status.yaaglIsRunning || !engine.status.yaaglAppExists || !engine.status.yaaglSupportExists)
             }
             .padding()
@@ -206,7 +215,24 @@ struct ContentView: View {
             engine.refreshStatus()
         }
         .alert(isPresented: $showingAlert) {
-            Alert(
+            if confirmingUninstall {
+                return Alert(
+                    title: Text("Uninstall managed Wine?"),
+                    message: Text("This removes this installer’s Wine runtime, Yaagl Wine menu registration, and its cached archive. Your game, prefix, login, and registry are preserved. If a previous Wine can be safely restored, it and its saved selection will be restored."),
+                    primaryButton: .destructive(Text("Uninstall Wine")) {
+                        confirmingUninstall = false
+                        engine.uninstall { success, message in
+                            alertTitle = success ? "Uninstall Complete" : "Uninstall Failed"
+                            alertMessage = message
+                            showingAlert = true
+                        }
+                    },
+                    secondaryButton: .cancel {
+                        confirmingUninstall = false
+                    }
+                )
+            }
+            return Alert(
                 title: Text(alertTitle),
                 message: Text(alertMessage),
                 dismissButton: .default(Text("OK"))

@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 private enum CLIAction {
     case install
     case restore
+    case uninstall
 }
 
 private struct CLIOptions {
@@ -39,10 +40,11 @@ private struct CLIOptions {
 }
 
 private let usage = """
-Usage: hsr-wine-installer (--cli | --install | --restore) [--app-path PATH] [--support-path PATH]
+Usage: hsr-wine-installer (--cli | --install | --restore | --uninstall) [--app-path PATH] [--support-path PATH]
 
 Installs the bundled prebuilt Wine runtime and registers it in Yaagl's Wine menu.
 Use --restore to restore Yaagl's prior Wine registration from its installer backup.
+Use --uninstall to remove only this installer's managed Wine, menu registration, and cached archive; the game and prefix are preserved.
 """
 
 private func parseCLI(arguments: [String]) throws -> CLIOptions? {
@@ -68,17 +70,24 @@ private func parseCLI(arguments: [String]) throws -> CLIOptions? {
         case "--install":
             sawCLIOption = true
             guard options.explicitAction == nil else {
-                throw CLIError("Only one of --install or --restore may be specified.")
+                throw CLIError("Only one of --install, --restore, or --uninstall may be specified.")
             }
             options.action = .install
             options.explicitAction = .install
         case "--restore":
             sawCLIOption = true
             guard options.explicitAction == nil else {
-                throw CLIError("Only one of --install or --restore may be specified.")
+                throw CLIError("Only one of --install, --restore, or --uninstall may be specified.")
             }
             options.action = .restore
             options.explicitAction = .restore
+        case "--uninstall":
+            sawCLIOption = true
+            guard options.explicitAction == nil else {
+                throw CLIError("Only one of --install, --restore, or --uninstall may be specified.")
+            }
+            options.action = .uninstall
+            options.explicitAction = .uninstall
         case "--app-path", "--support-path":
             sawCLIOption = true
             index += 1
@@ -144,6 +153,8 @@ private func runCLI(_ options: CLIOptions) -> Never {
         engine.install(completion: completion)
     case .restore:
         engine.restore(completion: completion)
+    case .uninstall:
+        engine.uninstall(completion: completion)
     }
 
     while !isDone {

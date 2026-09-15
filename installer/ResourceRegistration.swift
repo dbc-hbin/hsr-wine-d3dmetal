@@ -43,9 +43,15 @@ enum ResourceRegistration {
         }
     }
 
-    /// Returns false when an upstream update already replaced our registered resource.
-    @discardableResult
-    static func restore(resourcePath: String, backupDirectory: String) throws -> Bool {
+    struct RestorePlan {
+        fileprivate let current: Data
+        fileprivate let original: Data?
+
+        var restoresRegisteredResource: Bool { original != nil }
+    }
+
+    /// Validates that the current resource can be safely detached without changing it.
+    static func prepareRestore(resourcePath: String, backupDirectory: String, archivePath: String? = nil) throws -> RestorePlan {
         let resource = URL(fileURLWithPath: resourcePath)
         let current = try Data(contentsOf: resource)
         let hash = SHA256.hash(data: current).map { String(format: "%02x", $0) }.joined()
@@ -55,14 +61,43 @@ enum ResourceRegistration {
                 throw NSError(domain: "Registration", code: 3, userInfo: [NSLocalizedDescriptionKey:
                     "Yaagl's registered frontend has changed. Restore cannot safely remove its update helper; the frontend and helper have been preserved."])
             }
-            return false
+            return RestorePlan(current: current, original: nil)
         }
         let original = try Data(contentsOf: backup)
         guard original.range(of: Data("__yaaglD3MetalUpdate".utf8)) == nil else {
             throw NSError(domain: "Registration", code: 4, userInfo: [NSLocalizedDescriptionKey:
                 "The saved frontend still requires the registration helper. Restore was stopped without replacing it."])
         }
+        if let archivePath {
+            let verification = resource.deletingLastPathComponent().appendingPathComponent(".wine-unregister-check-\(UUID().uuidString).neu")
+            defer { try? FileManager.default.removeItem(at: verification) }
+            try original.write(to: verification, options: .withoutOverwriting)
+            try AsarPatcher.patch(sourcePath: verification.path, outputPath: verification.path,
+                                  archivePath: archivePath, displayName: RuntimePackage.targetDisplayName)
+            guard try AsarPatcher.contentsEquivalent(Data(contentsOf: verification), current) else {
+                throw NSError(domain: "Registration", code: 6, userInfo: [NSLocalizedDescriptionKey:
+                    "The saved frontend backup does not reproduce the installed registration. Nothing was removed."])
+            }
+        }
+        return RestorePlan(current: current, original: original)
+    }
+
+    /// Applies a previously validated plan only if the resource is unchanged.
+    @discardableResult
+    static func restore(resourcePath: String, plan: RestorePlan) throws -> Bool {
+        let resource = URL(fileURLWithPath: resourcePath)
+        guard try Data(contentsOf: resource) == plan.current else {
+            throw NSError(domain: "Registration", code: 5, userInfo: [NSLocalizedDescriptionKey:
+                "Yaagl's resources changed after uninstall validation. Nothing was removed."])
+        }
+        guard let original = plan.original else { return false }
         try original.write(to: resource, options: .atomic)
         return true
+    }
+
+    /// Returns false when an upstream update already replaced our registered resource.
+    @discardableResult
+    static func restore(resourcePath: String, backupDirectory: String, archivePath: String? = nil) throws -> Bool {
+        try restore(resourcePath: resourcePath, plan: prepareRestore(resourcePath: resourcePath, backupDirectory: backupDirectory, archivePath: archivePath))
     }
 }

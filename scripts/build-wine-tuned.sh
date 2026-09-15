@@ -43,6 +43,34 @@ BASE_SOURCE="$BASE_ROOT/source"
 BASE_HOST="$BASE_ROOT/host"
 BASE_PROVENANCE="$BASE_ROOT/provenance.json"
 BASE_DEPS_ENV="$BASE_ROOT/deps/env.sh"
+RELEASE_DEPLOYMENT_TARGET=26.0
+SDK_26_5_DEFAULT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+
+resolve_release_sdk() {
+  if [ -n "${WINE_SDKROOT:-}" ]; then
+    printf '%s\n' "$WINE_SDKROOT"
+  elif [ -d "$SDK_26_5_DEFAULT" ]; then
+    printf '%s\n' "$SDK_26_5_DEFAULT"
+  else
+    /usr/bin/xcrun --sdk macosx --show-sdk-path
+  fi
+}
+
+validate_release_toolchain() {
+  [ "$MACOSX_DEPLOYMENT_TARGET" = "$RELEASE_DEPLOYMENT_TARGET" ] || {
+    echo "build-wine-tuned: release deployment target must be $RELEASE_DEPLOYMENT_TARGET (got $MACOSX_DEPLOYMENT_TARGET)" >&2
+    exit 2
+  }
+  [ -d "$SDKROOT" ] || {
+    echo "build-wine-tuned: SDKROOT is not a directory: $SDKROOT" >&2
+    exit 2
+  }
+  sdk_version=$(/usr/libexec/PlistBuddy -c "Print :Version" "$SDKROOT/SDKSettings.plist" 2>/dev/null || true)
+  case "$sdk_version" in
+    26.*) ;;
+    *) echo "build-wine-tuned: macOS 26.x SDK required for release rebuild (got ${sdk_version:-unknown} at $SDKROOT)" >&2; exit 2 ;;
+  esac
+}
 PATCH_DIR="$REPO_DIR/patches/wine-tuned"
 SOURCE_PIN=913e31f201d344223bdf3d13a50a41af35893d12
 INSPECTED_UPSTREAM_TIP=788d90c4e1d628fab6672623f0c8094b984ea2fa
@@ -146,7 +174,8 @@ Actions:
 
 Profile: selected by WINE_BUILD_PROFILE (tuned or safe-msync; default tuned).
 Environment: WINE_P3_ROOT selects prepared baseline inputs (default build/wine-p3).
-MACOSX_DEPLOYMENT_TARGET defaults to 26.0; SDKROOT selects the installed SDK.
+Release builds always target macOS 26.0. WINE_SDKROOT may select a macOS 26.x SDK;
+otherwise the installed CommandLineTools macOS 26.5 SDK is preferred.
 WINE_PACKAGE_NAME and WINE_RUNTIME_ID override the profile package metadata.
 The driver never writes build/wine-p3. It intentionally does not perform a full
 Wine rebuild: unchanged PE and Unix files are inherited byte-for-byte from
@@ -391,6 +420,9 @@ require_profile_source_inventory() {
 }
 
 cmd_preflight() {
+  export SDKROOT=$(resolve_release_sdk)
+  export MACOSX_DEPLOYMENT_TARGET=$RELEASE_DEPLOYMENT_TARGET
+  validate_release_toolchain
   require_exec /usr/bin/arch
   require_exec /usr/bin/clang
   require_exec /usr/bin/clang++
@@ -548,10 +580,11 @@ setup_x64_env() {
     GSTREAMER_CFLAGS GSTREAMER_LIBS FFMPEG_CFLAGS FFMPEG_LIBS 2>/dev/null || true
   # shellcheck disable=SC1090
   . "$BASE_DEPS_ENV"
-  export SDKROOT="${SDKROOT:-$(/usr/bin/xcrun --sdk macosx --show-sdk-path)}"
+  export SDKROOT=$(resolve_release_sdk)
   export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
   export PATH="/opt/homebrew/opt/bison/bin:$MINGW_ROOT/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-  export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-26.0}"
+  export MACOSX_DEPLOYMENT_TARGET=$RELEASE_DEPLOYMENT_TARGET
+  validate_release_toolchain
   DEP_PREFIX="$BASE_ROOT/deps/macports/opt/local"
   if [ -d "$BASE_ROOT/deps/gstreamer/sdk/GStreamer.framework/Versions/1.0" ]; then
     GSTREAMER_ROOT="$BASE_ROOT/deps/gstreamer/sdk/GStreamer.framework/Versions/1.0"
@@ -588,10 +621,11 @@ setup_x64_env() {
 setup_arm64_env() {
   # Do not expose x86_64 MacPorts/GStreamer link flags to the native server.
   export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-  export SDKROOT="${SDKROOT:-$(/usr/bin/xcrun --sdk macosx --show-sdk-path)}"
+  export SDKROOT=$(resolve_release_sdk)
   export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
   export CC="/usr/bin/clang -arch arm64"
-  export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-26.0}"
+  export MACOSX_DEPLOYMENT_TARGET=$RELEASE_DEPLOYMENT_TARGET
+  validate_release_toolchain
   export CXX="/usr/bin/clang++ -arch arm64"
   export CFLAGS="-O2 -g -DWINE_TUNED_X86_SERVER -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
   export CXXFLAGS="-O2 -g -DWINE_TUNED_X86_SERVER -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"

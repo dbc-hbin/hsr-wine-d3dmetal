@@ -125,6 +125,48 @@ public struct AsarPatcher {
         try atomicallyWrite(output, to: outputPath)
     }
 
+    static func contentsEquivalent(_ left: Data, _ right: Data) throws -> Bool {
+        func members(_ data: Data) throws -> [String: Data] {
+            let headerSize = try uint32(data, at: 8, description: "header size")
+            let headerLength = try uint32(data, at: 12, description: "header JSON size")
+            let payloadStart = try checkedAdd(12, Int(headerSize), description: "payload offset")
+            let headerEnd = try checkedAdd(16, Int(headerLength), description: "header JSON end")
+            guard payloadStart <= data.count, headerEnd <= payloadStart,
+                  let header = try JSONSerialization.jsonObject(with: data.subdata(in: 16..<headerEnd)) as? [String: Any] else {
+                throw AsarPatcherError.invalidFileFormat("Header exceeds file bounds.")
+            }
+            func collect(_ directory: [String: Any], path: [String], into result: inout [String: Data]) throws {
+                guard let files = directory["files"] as? [String: Any] else { return }
+                for (name, value) in files {
+                    guard let entry = value as? [String: Any] else {
+                        throw AsarPatcherError.headerParseFailed("Invalid archive entry.")
+                    }
+                    let memberPath = path + [name]
+                    if entry["files"] != nil {
+                        try collect(entry, path: memberPath, into: &result)
+                    } else if let offset = integer(entry["offset"]), let size = integer(entry["size"]) {
+                        guard offset >= 0, size >= 0 else {
+                            throw AsarPatcherError.invalidFileFormat("Archive member has a negative offset or size.")
+                        }
+                        let start = try checkedAdd(payloadStart, offset, description: "member offset")
+                        let end = try checkedAdd(start, size, description: "member end")
+                        guard start >= payloadStart, end <= data.count else {
+                            throw AsarPatcherError.invalidFileFormat("Archive member exceeds file bounds.")
+                        }
+                        result[memberPath.joined(separator: "/")] = data.subdata(in: start..<end)
+                    } else {
+                        let metadata = try JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys])
+                        result[memberPath.joined(separator: "/")] = metadata
+                    }
+                }
+            }
+            var result: [String: Data] = [:]
+            try collect(header, path: [], into: &result)
+            return result
+        }
+        return try members(left) == members(right)
+    }
+
     private static func uint32(_ data: Data, at offset: Int, description: String) throws -> UInt32 {
         guard offset >= 0, offset <= data.count - 4 else {
             throw AsarPatcherError.invalidFileFormat("Missing \(description).")

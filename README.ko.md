@@ -7,17 +7,23 @@ HSR에서 유효한 Direct3D 11 경로를 사용합니다. `-use-d3d12`를 추�
 ## 요구 사항
 
 - Apple Silicon Mac
-- macOS 26 이상
+- 패키지 메타데이터 기준 macOS 26.4 이상: 새 Wine·핵심 바이너리의 배포 대상은 macOS 26.0으로 감사되었지만 Apple 순정 라이브러리 하나에서 26.4 최소 버전이 관찰되었습니다. 실제 설치 프로그램 시작과 D3D 장치 동작은 macOS 27에서만 확인했으므로 macOS 26.x 런타임 호환성은 아직 실증되지 않았습니다.
 - Rosetta 2
 - Yaagl HSR OS
 
-## 설치와 복원
+## 설치, 복원, 제거
 
-[`v1.0.0` 릴리스](https://github.com/dbc-hbin/hsr-wine-d3dmetal/releases/tag/v1.0.0)의 [설치 프로그램 ZIP](https://github.com/dbc-hbin/hsr-wine-d3dmetal/releases/download/v1.0.0/HSRWineD3DMetalInstaller.zip)을 다운로드하고 `HSRWineD3DMetalInstaller.zip`을 푼 뒤, Yaagl HSR OS를 종료하고 **HSR Wine D3DMetal Installer.app**을 실행합니다. 앱은 포함된 `wine-11.17-hsr-gptk4b2-stock.tar.xz`를 설치하고 **`Wine 11.17 GPTK4.0b2`**를 등록하며, 복원을 위해 이전 Yaagl 리소스와 Wine 선택을 보존합니다. 설치 프로그램의 Restore 기능으로 저장된 상태를 복구할 수 있습니다.
+v1.0.0 설치 프로그램은 사용하지 마십시오. Wine 핵심 파일이 실수로 macOS 27 대상으로 빌드되었습니다. 검토된 v1.0.1은 [Releases](https://github.com/dbc-hbin/hsr-wine-d3dmetal/releases/tag/v1.0.1) 또는 [HSRWineD3DMetalInstaller.zip 직접 링크](https://github.com/dbc-hbin/hsr-wine-d3dmetal/releases/download/v1.0.1/HSRWineD3DMetalInstaller.zip)에서 받으십시오. 이 앱은 `wine-11.17-hsr-gptk4b2-stock.tar.xz`를 설치하고 **`Wine 11.17 GPTK4.0b2`**를 등록하며 이전 Yaagl 리소스와 Wine 선택을 보존합니다. **Restore Backup**은 저장된 스냅샷으로 되돌립니다. 별도의 **Uninstall Wine**은 확인 후 이 설치 프로그램 소유로 식별된 런타임, Wine 메뉴 등록, 정확한 캐시 아카이브만 제거합니다. 게임, prefix, 로그인, 레지스트리, 다른 런타임·캐시는 보존하며, 안전할 때 이전 Wine과 저장된 선택을 복원합니다. 다른 런타임을 현재 선택했다면 해당 선택을 유지하고 남겨 둔 백업을 보고합니다.
 
 앱은 공증되거나 Developer ID로 서명되지 않았으므로 macOS가 최초 실행을 차단할 수 있습니다. 다운로드 파일을 확인한 뒤 Finder에서 우클릭하여 **열기**를 선택하거나 개인정보 보호 및 보안 설정에서 허용하십시오. Gatekeeper를 전역으로 끄지 마십시오.
 
-명령줄 설치·복원은 `installer/hsr-wine-installer`를 사용하며 `/Applications/Yaagl HSR OS.app`과 `$HOME/Library/Application Support/Yaagl HSR OS`를 대상으로 합니다.
+명령줄 설치·복원·제거는 `installer/hsr-wine-installer`를 사용하며 `/Applications/Yaagl HSR OS.app`과 `$HOME/Library/Application Support/Yaagl HSR OS`를 대상으로 합니다. 제거는 절대 암묵적으로 실행되지 않습니다. 반드시 `--uninstall`을 명시하며 `--install` 또는 `--restore`와 함께 사용할 수 없습니다. GUI와 CLI는 Yaagl/Wine 실행 중 작업을 거부합니다.
+
+```sh
+installer/hsr-wine-installer --install
+installer/hsr-wine-installer --restore
+installer/hsr-wine-installer --uninstall
+```
 
 저장소: <https://github.com/dbc-hbin/hsr-wine-d3dmetal>
 
@@ -31,7 +37,7 @@ scripts/package-hsr-stock-runtime.sh \
   /path/to/Game_Porting_Toolkit_4.0_beta_2.dmg
 ```
 
-기본 출력은 `build/hsr-runtime/wine-11.17-hsr-gptk4b2-stock.tar.xz`와 SHA-256 사이드카입니다. 패키저는 공식 평가 이미지를 읽기 전용으로 마운트하고 D3DMetal 버전, Apple 서명, 고정된 순정 해시를 확인합니다. 전체 redist를 덮어씌워 수정된 D3DMetal·MetalIR 바이트를 배제하고, 런타임 인벤토리를 작성하며 심볼릭 링크와 권한을 보존합니다. DMG 대신 직접 추출한 `redist` 디렉터리도 사용할 수 있습니다.
+기본 출력은 `build/hsr-runtime/wine-11.17-hsr-gptk4b2-stock.tar.xz`와 SHA-256 사이드카입니다. 패키저는 출력을 만들기 전에 macOS 26.0보다 높은 버전을 요구하는 Wine·핵심 Mach-O 페이로드를 거부합니다. Apple 순정 파일은 바이트 단위로 유지하며, `libdxccontainer.dylib`에서 관찰된 macOS 26.4 최소 버전을 포함한 Apple 메타데이터는 별도로 보고하되 Wine 핵심 검사를 완화하지 않습니다. 패키저는 공식 평가 이미지를 읽기 전용으로 마운트하고 D3DMetal 버전, Apple 서명, 고정된 순정 해시를 확인합니다. 전체 redist를 덮어씌워 수정된 D3DMetal·MetalIR 바이트를 배제하고, 런타임 인벤토리를 작성하며 심볼릭 링크와 권한을 보존합니다. DMG 대신 직접 추출한 `redist` 디렉터리도 사용할 수 있습니다.
 
 Apple GPTK 라이선스는 해당 조건에 따른 비상업적 배포만 허용합니다. Apple 소프트웨어는 지원되는 Apple 브랜드 하드웨어에서만 실행할 수 있고 임대, 대여, 호스팅, 판매, 수정 또는 파생 저작물 제작을 할 수 없습니다. 패키징된 프레임워크는 Apple 라이선스와 고지를 보존합니다. 배포 전에 공식 이미지의 전체 라이선스를 검토해야 합니다.
 
